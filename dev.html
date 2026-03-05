@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<!--
+  globe.html — Interaktywny glob 3D dla 7th Sea / Mappa Mundi
+  ============================================================
+
+  ARCHITEKTURA
+  ------------
+  Używamy Three.js r128 (CDN) do renderowania sfery 3D w WebGL.
+  Sfera składa się z dwóch warstw:
+    1. Kafelki equirectangular — pokrywają pas między LAT_CAP_DEG N/S
+    2. Czapy polarne gnomoniczne — pokrywają bieguny od LAT_CAP_DEG do 90°
+
+  CZAPY POLARNE — RZUT GNOMONICZNY
+  ----------------------------------
+  Rzut gnomoniczny (styczny do bieguna) mapuje każdy punkt sfery na
+  płaszczyznę styczną do bieguna wzdłuż promienia przechodzącego przez
+  środek sfery. Wzory:
+    r = tan(angular_distance_from_pole)   (odległość od centrum tekstury)
+    φ = azimut                            (kąt w teksturze)
+
+  Zalety nad equirectangular przy biegunach:
+    - Brak rozciągnięcia poziomego (sinθ → 0 przy biegunie)
+    - Naturalne proporcje obszarów polarnych
+    - Linie proste (wielkie okręgi przez biegun) są prostymi w obrazie
+
+  GEOMETRIA buildPolarCapGeo(isNorth, segR, segPhi):
+    Tworzy dysk sferyczny — pierścień wierzchołków od LAT_CAP_DEG do 90°.
+    UV dla każdego wierzchołka pochodzi z rzutu gnomonicznego:
+      u = 0.5 + r·cos(azimut) / (2·r_max)
+      v = 0.5 + r·sin(azimut) / (2·r_max)
+    gdzie r = tan(π/2 − |lat|),  r_max = tan(π/2 − LAT_CAP_RAD)
+
+  OBCIĘCIE KAFELKÓW EQUIRECTANGULAR
+  -----------------------------------
+  buildTileGeo() przyjmuje opcjonalne thetaMin/thetaMax — jeśli podane,
+  geometria kafelka jest przycinana do tego zakresu. Dla row=0 (biegun N)
+  thetaMin = LAT_CAP_RAD (zamiast 0), dla row=rows-1 thetaMax = π − LAT_CAP_RAD.
+  UV są przeliczane relative do oryginalnego zakresu kafelka, żeby tekstura
+  nie była deformowana — wycina się tylko geometrię.
+
+  STREFA BLEND — USUWANIE SZWU
+  ------------------------------
+  Kafelki polarne zaczynają się od BLEND_LAT_DEG = LAT_CAP_DEG − 5° i tam
+  mają alpha=0, a przy LAT_CAP_DEG mają alpha=1. Shader (vertex color +
+  MeshBasicMaterial.vertexColors) interpoluje tę przezroczystość.
+  Equirectangular kafelki polarne mają odwrotną blendę (1 → 0 przy krawędzi).
+
+  KLUCZOWY PROBLEM: ODBICIE OSI X NA SFERZE
+  ------------------------------------------
+  Patrząc z zewnątrz sfery Three.js, oś X jest odwrócona względem
+  mapy płaskiej equirectangular:
+    - Mapa 2D:     lon rośnie → W do E (lewo do prawo)
+    - Sfera 3D:    phi rosnące = obrót w lewo (E po lewej)
+
+  Rozwiązanie dwuetapowe:
+  1. gen_tiles.py: kafelki PNG odbijane poziomo (FLIP_LEFT_RIGHT)
+  2. buildTileGeo(): phiStart = PI - (col+1)*phiLen  [odwrócona kolejność]
+
+  Dla czap polarnych: azimut jest odwracany (negowany) aby zachować
+  spójność z kierunkiem E/W kafelków equirectangular.
+
+  PLIKI
+  -----
+  globe.html          — ten plik
+  gen_tiles.py        — generator kafelków equirectangular (bez zmian)
+  gen_polar_tiles.py  — generator kafelków polarnych (rzut gnomoniczny)
+  tiles/far/          — 32 kafelki FAR equirectangular
+  tiles/near/         — 32 kafelki NEAR equirectangular
+  tiles/polar_n.webp   — czapa północna (gnomoniczna, 2048×2048)
+  tiles/polar_s.webp   — czapa południowa (gnomoniczna, 2048×2048)
+
+  URUCHOMIENIE
+  ------------
+  Wymaga lokalnego serwera HTTP:
+    python3 -m http.server 8000
+  Następnie: http://localhost:8000/globe.html
+-->
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>7th Sea — Mappa Mundi</title>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
+<style>
+/* ── Zmienne CSS ── */
+:root{
+  --gold:#e8b830;       /* złoty akcent */
+  --gold-d:#c8960c;     /* ciemniejsze złoto (hover, linie) */
+  --border:#8b6914;     /* krawędzie paneli */
+  --ink:#0e0b06;        /* tło — prawie czarne z nutą brązu */
+  --panel:rgba(8,5,2,0.88); /* tło paneli HUD */
+  --txt:#d4c49a;        /* tekst podstawowy — pergaminowy */
+}
+
+*{margin:0;padding:0;box-sizing:border-box;}
+body{
+  background:var(--ink);
+  color:var(--txt);
+  font-family:'Cinzel',serif;
+  height:100vh;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  user-select:none; /* zapobiega zaznaczaniu tekstu przy drag */
+}
+
+/* ── Nagłówek ── */
+header{
+  height:56px;
+  flex-shrink:0;
+  background:linear-gradient(180deg,#080502,#160e04);
+  border-bottom:1px solid var(--border);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 18px;
+  position:relative;
+  z-index:10;
+}
+header::after{
+  content:'';
+  position:absolute;
+  bottom:-3px;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--gold),transparent);
+}
+.logo{display:flex;align-items:center;gap:11px;}
+.logo h1{
+  font-family:'Cinzel Decorative',serif;
+  font-size:1.15rem;color:var(--gold);
+  letter-spacing:.1em;
+  text-shadow:0 0 16px rgba(232,184,48,.35);
+  line-height:1.1;
+}
+.logo small{
+  display:block;font-size:.58rem;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--txt);opacity:.65;margin-top:1px;
+}
+#coords{font-size:.68rem;letter-spacing:.05em;min-width:190px;text-align:right;opacity:.75;}
+
+/* ── Główny obszar renderowania ── */
+#wrap{
+  flex:1;
+  position:relative;
+  overflow:hidden;
+  /* Tło kosmosu — widoczne przez przezroczystość renderera WebGL */
+  background:radial-gradient(ellipse at center,#0b1020 0%,#020306 100%);
+}
+
+/* Canvas Three.js — wypełnia cały obszar */
+canvas#c{
+  display:block;width:100%;height:100%;
+  cursor:grab;position:relative;z-index:2;
+}
+canvas#c:active{cursor:grabbing;}
+
+/* Canvas gwiazd — za kulą, nieinteraktywny */
+canvas#stars{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:1;}
+
+/* ── Przyciski zoom ── */
+#zoom-btns{
+  position:absolute;right:16px;top:50%;transform:translateY(-50%);
+  display:flex;flex-direction:column;gap:8px;z-index:8;
+}
+.zbtn{
+  width:40px;height:40px;
+  background:var(--panel);
+  border:1px solid var(--border);border-radius:5px;
+  color:var(--gold);font-size:1.4rem;line-height:1;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;
+  transition:all .15s;backdrop-filter:blur(6px);
+}
+.zbtn:hover{background:rgba(200,150,12,.22);border-color:var(--gold);}
+.zbtn:active{transform:scale(.9);}
+.zbtn:disabled{opacity:.25;cursor:not-allowed;}
+
+/* ── Badge informacyjny (środek góry) ── */
+#badge-view{
+  position:absolute;top:12px;left:50%;transform:translateX(-50%);
+  z-index:8;
+  background:var(--panel);border:1px solid var(--border);border-radius:20px;
+  padding:4px 16px;font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;
+  pointer-events:none;backdrop-filter:blur(6px);white-space:nowrap;
+}
+
+/* ── Badge zoom (prawy dół) ── */
+#badge-zoom{
+  position:absolute;bottom:12px;right:16px;z-index:8;
+  background:var(--panel);border:1px solid var(--border);border-radius:4px;
+  padding:3px 11px;font-size:.63rem;letter-spacing:.1em;pointer-events:none;
+}
+
+/* ── Kompas (lewy dół) ── */
+#compass{
+  position:absolute;bottom:12px;left:14px;
+  width:76px;height:76px;
+  pointer-events:none;z-index:8;
+  filter:drop-shadow(0 2px 8px #000c);
+}
+
+/* ── Tryb debug ── */
+#dbg-tooltip{
+  position:fixed;
+  background:rgba(0,0,0,.82);
+  color:#ff6633;
+  font-family:monospace;
+  font-size:.72rem;
+  padding:4px 9px;
+  border-radius:3px;
+  border:1px solid #ff6633;
+  pointer-events:none;
+  z-index:100;
+  white-space:nowrap;
+  display:none;
+}
+#loading{
+  position:absolute;inset:0;
+  background:radial-gradient(ellipse at center,#0b1020 0%,#020306 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:0;
+  z-index:50;
+  transition:opacity .8s ease;
+}
+#loading.out{opacity:0;pointer-events:none;}
+.spin{
+  width:64px;height:64px;
+  animation:spin 3s linear infinite;
+  margin-bottom:24px;
+  filter:drop-shadow(0 0 12px rgba(232,184,48,.4));
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.load-title{
+  font-family:'Cinzel Decorative',serif;
+  font-size:.95rem;letter-spacing:.18em;
+  color:var(--gold);
+  text-shadow:0 0 20px rgba(232,184,48,.5);
+  margin-bottom:6px;
+}
+.load-txt{
+  font-size:.62rem;letter-spacing:.22em;text-transform:uppercase;
+  color:var(--txt);opacity:.55;
+  margin-bottom:28px;
+  min-height:1em;
+}
+/* Pasek postępu */
+.load-bar-wrap{
+  width:240px;
+  height:3px;
+  background:rgba(139,105,20,.25);
+  border-radius:2px;
+  overflow:hidden;
+  margin-bottom:10px;
+}
+.load-bar{
+  height:100%;
+  width:0%;
+  background:linear-gradient(90deg, var(--gold-d), var(--gold));
+  border-radius:2px;
+  transition:width .25s ease;
+  box-shadow:0 0 8px rgba(232,184,48,.6);
+}
+.load-count{
+  font-size:.58rem;letter-spacing:.12em;
+  color:var(--txt);opacity:.4;
+}
+@keyframes pulse{0%,100%{opacity:.3}50%{opacity:.7}}
+</style>
+</head>
+<body>
+
+<!-- ── NAGŁÓWEK ── -->
+<header>
+  <div class="logo">
+    <!-- Ikona kompasu wektorowego -->
+    <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+      <circle cx="18" cy="18" r="16" stroke="#c8960c" stroke-width="1.3" fill="#080502"/>
+      <circle cx="18" cy="18" r="10" stroke="#8b6914" stroke-width=".6" fill="none"/>
+      <polygon points="18,3 21,15 15,15" fill="#e8b830"/>
+      <polygon points="18,33 15,21 21,21" fill="#8b6914"/>
+      <polygon points="33,18 21,15 21,21" fill="#8b6914"/>
+      <polygon points="3,18 15,21 15,15" fill="#8b6914"/>
+      <circle cx="18" cy="18" r="2.2" fill="#e8b830"/>
+    </svg>
+    <div><h1>7th Sea</h1><small>Mappa Mundi — Théah</small></div>
+  </div>
+  <!-- Koordynaty centrum widoku — aktualizowane przez refreshCoords() -->
+  <div id="coords">Obróć glob…</div>
+</header>
+
+<!-- ── OBSZAR GLOBU ── -->
+<div id="wrap">
+  <!-- Gwiazdy (canvas 2D, za kulą) -->
+  <canvas id="stars"></canvas>
+  <!-- Główny canvas Three.js / WebGL -->
+  <canvas id="c"></canvas>
+
+  <!-- Ekran ładowania — znika po załadowaniu wszystkich kafli i czap polarnych -->
+  <div id="loading">
+    <svg class="spin" viewBox="0 0 60 60" fill="none">
+      <circle cx="30" cy="30" r="27" stroke="#c8960c" stroke-width="1.6" fill="none" stroke-dasharray="6 3"/>
+      <polygon points="30,5 34,26 26,26" fill="#e8b830"/>
+      <polygon points="30,55 26,34 34,34" fill="#8b6914"/>
+      <circle cx="30" cy="30" r="4" fill="#e8b830"/>
+    </svg>
+    <div class="load-title">7th Sea</div>
+    <div class="load-txt" id="load-phase">Przygotowanie map Théah…</div>
+    <div class="load-bar-wrap">
+      <div class="load-bar" id="load-bar"></div>
+    </div>
+    <div class="load-count" id="load-count">0 / 0</div>
+  </div>
+
+  <!-- Informacja o aktywnym widoku -->
+  <div id="badge-view">🌐 Widok ogólny · siatka 15°</div>
+
+  <!-- Przycisk zoom — jeden przycisk, zmienia się między + a − -->
+  <div id="zoom-btns">
+    <button class="zbtn" id="btn-zoom" onclick="doZoom(zoomIdx === 0 ? 1 : -1)" title="Zoom">+</button>
+  </div>
+
+  <!-- Kompas SVG (dekoracyjny, nie obraca się z globem) -->
+  <svg id="compass" viewBox="0 0 76 76" fill="none">
+    <circle cx="38" cy="38" r="35" stroke="#8b6914" stroke-width=".8" fill="rgba(8,5,2,0.52)"/>
+    <polygon points="38,5 42,33 34,33" fill="#e8b830"/>
+    <polygon points="38,71 34,43 42,43" fill="#5a4010"/>
+    <polygon points="5,38 33,34 33,42" fill="#5a4010"/>
+    <polygon points="71,38 43,42 43,34" fill="#5a4010"/>
+    <circle cx="38" cy="38" r="4" fill="#e8b830"/>
+    <circle cx="38" cy="38" r="1.6" fill="#0e0b06"/>
+    <text x="38" y="13" text-anchor="middle" fill="#e8b830" font-size="9" font-family="Cinzel,serif" font-weight="700">N</text>
+    <text x="38" y="71" text-anchor="middle" fill="#8b6914" font-size="8" font-family="Cinzel,serif">S</text>
+    <text x="67" y="42" text-anchor="middle" fill="#8b6914" font-size="8" font-family="Cinzel,serif">E</text>
+    <text x="9"  y="42" text-anchor="middle" fill="#8b6914" font-size="8" font-family="Cinzel,serif">W</text>
+  </svg>
+  <!-- Tryb debug — tooltip -->
+  <div id="dbg-tooltip"></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+// ═══════════════════════════════════════════════════════════════════════
+// TRYB DEBUG
+// Ustaw DEBUG = true aby włączyć:
+//   - czerwona ramka wokół kafelka pod kursorem
+//   - tooltip z nazwą pliku kafelka
+// ═══════════════════════════════════════════════════════════════════════
+const DEBUG = true;
+
+// ═══════════════════════════════════════════════════════════════════════
+// GWIAZDY — canvas 2D w tle, generowane proceduralnie
+// ═══════════════════════════════════════════════════════════════════════
+(function () {
+  const sc = document.getElementById('stars');
+  const ctx = sc.getContext('2d');
+  // Losowe gwiazdy — stałe pozycje (losowane raz przy starcie)
+  const stars = Array.from({ length: 280 }, () => ({
+    x: Math.random(), y: Math.random(),
+    r: Math.random() * 1.1 + 0.2,
+    a: Math.random() * 0.6 + 0.2,
+  }));
+  function paint() {
+    const parent = sc.parentElement;
+    sc.width  = parent ? parent.clientWidth  : window.innerWidth;
+    sc.height = parent ? parent.clientHeight : window.innerHeight;
+    stars.forEach(s => {
+      ctx.beginPath();
+      ctx.arc(s.x * sc.width, s.y * sc.height, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(215,230,255,${s.a})`;
+      ctx.fill();
+    });
+  }
+  paint();
+  window.addEventListener('resize', paint);
+  if (window.ResizeObserver) {
+    new ResizeObserver(paint).observe(sc.parentElement || document.body);
+  }
+})();
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// THREE.JS — inicjalizacja sceny
+// ═══════════════════════════════════════════════════════════════════════
+const wrap     = document.getElementById('wrap');
+const canvas   = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0); // przezroczyste tło → widać canvas#stars
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 50);
+
+// Odległości kamery dla dwóch poziomów zoomu (sfera ma promień 1.0)
+const ZOOM_DIST = [3.4, 1.15];
+let zoomIdx = 0;
+camera.position.z = ZOOM_DIST[0];
+
+// Pełne oświetlenie ambient — tekstury widoczne bez cieni
+scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+
+// Glob obraca się jako grupa — rotacja grupy = obrót kamery wokół sfery
+const globeGroup = new THREE.Group();
+scene.add(globeGroup);
+
+// Debug: śledź wszystkie dodania do globeGroup
+const _origAdd = globeGroup.add.bind(globeGroup);
+globeGroup.add = function(obj) {
+  console.log(`[globeGroup.add] children=${this.children.length}→${this.children.length+1}, obj.children=${obj.children ? obj.children.length : '?'}`, new Error().stack.split('\n')[2].trim());
+  return _origAdd(obj);
+};
+
+// Dopasowanie rozmiaru renderera do kontenera
+function onResize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', onResize);
+onResize();
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// STAŁE CZAP POLARNYCH
+// ═══════════════════════════════════════════════════════════════════════
+//
+// LAT_CAP_DEG  — szerokość geograficzna granicy czapy polarnej (np. 60°)
+//                Powyżej tej granicy (ku biegunowi) używamy rzutu gnomonicznego.
+//                Poniżej — equirectangular.
+//
+// BLEND_DEG    — szerokość strefy mieszania (po obu stronach granicy).
+//                W tej strefie czapa polarna przechodzi od alpha=0 do alpha=1,
+//                a kafelek equirectangular od alpha=1 do alpha=0.
+//                Eliminuje widoczny szew bez artefaktów z-fighting.
+//
+const LAT_CAP_DEG  = 60;
+const BLEND_DEG    = 2;
+const LAT_CAP_RAD  = THREE.MathUtils.degToRad(LAT_CAP_DEG);
+const BLEND_RAD    = THREE.MathUtils.degToRad(BLEND_DEG);
+// theta (od bieguna N) odpowiadające granicy czapy:
+//   theta = π/2 − lat,  lat=60° → theta=30°
+const THETA_CAP_N  = Math.PI / 2 - LAT_CAP_RAD;        // ~0.5236 rad (biegun N)
+const THETA_CAP_S  = Math.PI - THETA_CAP_N;             // ~2.618  rad (biegun S)
+const THETA_BLEND  = BLEND_RAD;                         // szerokość strefy blend
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// GEOMETRIA KAFELKA — buildTileGeo()
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Każdy kafelek to wycinek sfery jednostkowej pokrywający zakres:
+//   phi   ∈ [phiStart, phiStart + phiLen]   (długość geograficzna)
+//   theta ∈ [thetaStart, thetaStart + thetaLen]  (szerokość od bieguna)
+//
+// MODYFIKACJA POD CZAPY POLARNE:
+//   Dla row=0 (biegun N): thetaStart przesuwa się do THETA_CAP_N + THETA_BLEND
+//     (kafelek nie sięga do bieguna — tam jest czapa polarna).
+//   Dla row=rows-1 (biegun S): thetaEnd = THETA_CAP_S − THETA_BLEND.
+//   UV są przeliczane relatywnie do oryginalnego pełnego zakresu kafelka,
+//   żeby tekstura była poprawnie wykadrowana (nie rozciągnięta).
+//
+// ODWRÓCENIE OSI:
+//   phiStart = PI - (col+1)*phiLen   (zamiast -PI + col*phiLen)
+//
+// UV:
+//   u = ix/segW     (0..1 bez odwracania — PNG jest już odbity)
+//   v = 1 - vt_full (vt_full = znormalizowane theta w pełnym zakresie kafelka)
+//
+// WINDING ORDER: a,b,c / b,d,c → normalne na zewnątrz sfery
+//
+function buildTileGeo(col, row, cols, rows, segW, segH) {
+  const phiLen        = (Math.PI * 2) / cols;
+  const thetaLenFull  = Math.PI / rows;
+
+  // Pełny zakres kafelka (bez modyfikacji)
+  const thetaFullStart = row * thetaLenFull;
+  const thetaFullEnd   = thetaFullStart + thetaLenFull;
+
+  // Obcinanie kafelków przy granicy czap polarnych (poza strefą blend).
+  // Pierwszy wiersz (biegun N): dolna krawędź thetaStart przesuwa się do THETA_CAP_N.
+  // Ostatni wiersz (biegun S): górna krawędź thetaEnd przesuwa się do THETA_CAP_S.
+  // Dzięki temu kafelki equirectangular nie są renderowane pod czapami polarnymi.
+  let thetaStart = thetaFullStart;
+  let thetaEnd   = thetaFullEnd;
+  // Kafelki są przycięte dokładnie do granicy czapy (THETA_CAP_N).
+  // Czapa polarna (renderOrder=1) przykrywa je w blend zone własną alphą 1→0.
+  // Dzięki temu nie ma nakładania się dwóch przezroczystych warstw (źródło "parówek").
+  if (row === 0)        thetaStart = Math.max(thetaStart, THETA_CAP_N);
+  if (row === rows - 1) thetaEnd   = Math.min(thetaEnd,   THETA_CAP_S);
+  const thetaLen = thetaEnd - thetaStart;
+  // Jeśli po obcięciu zakres jest pusty (kafelek w całości pod czapą), zwróć pustą geometrię
+  if (thetaLen <= 0) return new THREE.BufferGeometry();
+
+  const phiStart = Math.PI - (col + 1) * phiLen;
+
+  const vCount = (segW + 1) * (segH + 1);
+  const pos  = new Float32Array(vCount * 3);
+  const nor  = new Float32Array(vCount * 3);
+  const uvs  = new Float32Array(vCount * 2);
+  let vi = 0, ui = 0;
+
+  for (let iy = 0; iy <= segH; iy++) {
+    const vt    = iy / segH;
+    const theta = thetaStart + vt * thetaLen;
+    const sinT  = Math.sin(theta), cosT = Math.cos(theta);
+
+    // UV.v: mapuj theta do zakresu kafelka (0=góra, 1=dół w PNG)
+    const vtFull = (theta - thetaFullStart) / thetaLenFull;
+
+    for (let ix = 0; ix <= segW; ix++) {
+      const ut  = ix / segW;
+      const phi = phiStart + ut * phiLen;
+      const sinP = Math.sin(phi), cosP = Math.cos(phi);
+
+      const x = sinT * cosP, y = cosT, z = sinT * sinP;
+      pos[vi] = x; nor[vi] = x; vi++;
+      pos[vi] = y; nor[vi] = y; vi++;
+      pos[vi] = z; nor[vi] = z; vi++;
+
+      uvs[ui++] = 1 - ut;     // U odwrócone — koryguje lustrzane odbicie tekstury
+      uvs[ui++] = 1 - vtFull; // V odwrócone
+    }
+  }
+
+  const idx = [];
+  for (let iy = 0; iy < segH; iy++) {
+    for (let ix = 0; ix < segW; ix++) {
+      const a = iy * (segW + 1) + ix;
+      const b = a + 1;
+      const c = a + (segW + 1);
+      const d = c + 1;
+      idx.push(a, b, c,  b, d, c);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal',   new THREE.BufferAttribute(nor, 3));
+  geo.setAttribute('uv',       new THREE.BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  return geo;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// GEOMETRIA CZAPY POLARNEJ — buildPolarCapGeo()
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Tworzy dysk sferyczny od bieguna (θ=0) do kąta thetaCap (np. 30° od bieguna).
+// Strefa blend: od thetaCap do thetaCap + THETA_BLEND wierzchołki mają alpha=0.
+//
+// UV z rzutu gnomonicznego:
+//   r(θ) = tan(θ)              — odległość od centrum w rzucie gnomonicznym
+//   r_max = tan(thetaCap + blendFrac*THETA_BLEND)  — normalizacja
+//   u = 0.5 + 0.5 · r · cos(azimut) / r_max
+//   v = 0.5 + 0.5 · r · sin(azimut) / r_max
+//
+// Azimut: dla bieguna N azimut biegnie od phi zgodnie z ruchem wskazówek,
+// dla S — odwrócony (żeby orientacja mapy była spójna z equirectangular).
+//
+// PARAMETRY:
+//   isNorth  — true = czapa północna (biegun y=+1), false = południowa
+//   segR     — segmenty radialnych pierścieni (precyzja radialna)
+//   segPhi   — segmenty kątowe wokół czapy (precyzja obwodowa)
+//
+function buildPolarCapGeo(isNorth, segR, segPhi) {
+  // Kąt thetaCap = kąt od bieguna do granicy czapy (w konwencji Three.js theta)
+  const thetaCap    = THETA_CAP_N;  // ten sam kąt dla obu biegunów (symetria)
+  const thetaBlend  = THETA_BLEND;
+  // Pełny zakres geometrii: od bieguna do thetaCap + thetaBlend
+  const thetaMax    = thetaCap + thetaBlend;
+  // r_max w rzucie gnomonicznym (dla normalizacji UV)
+  const rMax        = Math.tan(thetaMax);
+
+  // Biegun N: y=+1, theta rośnie w dół (ku równikowi)
+  // Biegun S: y=-1, theta mierzona od bieguna S (symetria przez oś Y)
+  const sign = isNorth ? 1 : -1;
+
+  const rings   = segR + 1;  // liczba pierścieni (łącznie z centrum)
+  const vPerRing = segPhi + 1; // wierzchołki na pierścień (+1 bo szew)
+  // Centrum (biegun) — jeden wierzchołek
+  const vCount  = 1 + rings * vPerRing;
+
+  const pos  = new Float32Array(vCount * 3);
+  const nor  = new Float32Array(vCount * 3);
+  const uvs  = new Float32Array(vCount * 2);
+  const cols = new Float32Array(vCount * 4); // RGBA vertex colors (dla alpha blend)
+  let vi = 0, ui = 0, ci = 0;
+
+  // ── Biegun (centrum dysku) ──
+  pos[vi]=0; nor[vi]=0; vi++;
+  pos[vi]=sign; nor[vi]=sign; vi++;
+  pos[vi]=0; nor[vi]=0; vi++;
+  uvs[ui++]=0.5; uvs[ui++]=0.5; // centrum tekstury
+  cols[ci++]=1; cols[ci++]=1; cols[ci++]=1; cols[ci++]=1; // alpha=1
+
+  // ── Pierścienie wokół bieguna ──
+  for (let ir = 0; ir < rings; ir++) {
+    const t  = (ir + 1) / rings;           // 0..1 (0=blisko bieguna, 1=krawędź)
+    const theta = thetaMax * t;            // kąt od bieguna
+    const sinT  = Math.sin(theta);
+    const cosT  = Math.cos(theta);
+    const r     = Math.tan(theta);         // promień w rzucie gnomonicznym
+    const uv_r  = r / rMax;               // znormalizowany promień UV (0..1 przy krawędzi)
+
+    // Alpha: pełna przy centrum, stopniowe zanikanie w strefie blend
+    const thetaFromCap = theta - thetaCap; // ujemne = wewnątrz czapy, dodatnie = blend
+    let alpha;
+    if (thetaFromCap <= 0) {
+      alpha = 1.0; // wewnątrz czapy — pełna widoczność
+    } else {
+      alpha = 1.0 - (thetaFromCap / thetaBlend); // liniowy zanik w strefie blend
+      alpha = Math.max(0, Math.min(1, alpha));
+    }
+
+    for (let ip = 0; ip <= segPhi; ip++) {
+      // Azimut: kąt wokół bieguna. Odwracamy dla zgodności z equirectangular.
+      // Dla bieguna N: phi Three.js = -azimut (bo phiStart = PI - (col+1)*phiLen)
+      // Odwracamy przez negację, żeby E/W się zgadzało.
+      const frac   = ip / segPhi;
+      const azimut = frac * Math.PI * 2; // 0..2π
+
+      // Pozycja na sferze (odwrócony azimut → zgodność z equirectangular)
+      const phi  = -azimut; // odwrócenie oś phi
+      const sinP = Math.sin(phi), cosP = Math.cos(phi);
+
+      // Dla bieguna S: theta rośnie od bieguna S, Y jest ujemne
+      const x = sinT * cosP;
+      const y = sign * cosT;
+      const z = sinT * sinP;
+
+      pos[vi]=x; nor[vi]=x; vi++;
+      pos[vi]=y; nor[vi]=y; vi++;
+      pos[vi]=z; nor[vi]=z; vi++;
+
+      // UV z rzutu gnomonicznego
+      // cos/sin azimutu dla UV używamy oryginalnego (nieodwróconego) azimutu,
+      // ale U negujemy dla zachowania chirality tekstury
+      const u = 0.5 + 0.5 * uv_r * Math.cos(azimut); // U bez negacji — phi=-azimut już koryguje kierunek E/W
+      const v = 0.5 + 0.5 * uv_r * Math.sin(azimut) * sign; // sign odwraca V dla S
+      uvs[ui++] = u;
+      uvs[ui++] = v;
+
+      cols[ci++]=1; cols[ci++]=1; cols[ci++]=1; cols[ci++]=alpha;
+    }
+  }
+
+  // ── Indeksy trójkątów ──
+  // Odbicie przez oś Y (biegun S: y ujemne) odwraca orientację trójkątów,
+  // dlatego N i S mają odwrotny winding.
+  const idx = [];
+  const baseOffset = 1;
+
+  // Wachlarz od centrum do pierwszego pierścienia
+  for (let ip = 0; ip < segPhi; ip++) {
+    const a = 0;
+    const b = baseOffset + ip;
+    const c = baseOffset + ip + 1;
+    if (isNorth) { idx.push(a, b, c); }   // N: odwrotny
+    else         { idx.push(a, c, b); }   // S: poprawny (działa)
+  }
+
+  // Pierścienie
+  for (let ir = 0; ir < rings - 1; ir++) {
+    const rowA = baseOffset + ir * vPerRing;
+    const rowB = rowA + vPerRing;
+    for (let ip = 0; ip < segPhi; ip++) {
+      const a = rowA + ip, b = rowA + ip + 1;
+      const c = rowB + ip, d = rowB + ip + 1;
+      if (isNorth) { idx.push(a, b, c,  b, d, c); }  // N: odwrotny
+      else         { idx.push(a, c, b,  b, c, d); }  // S: poprawny
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position',  new THREE.BufferAttribute(pos,  3));
+  geo.setAttribute('normal',    new THREE.BufferAttribute(nor,  3));
+  geo.setAttribute('uv',        new THREE.BufferAttribute(uvs,  2));
+  geo.setAttribute('color',     new THREE.BufferAttribute(cols, 4));
+  geo.setIndex(idx);
+  return geo;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// KONFIGURACJA WIDOKÓW
+// ═══════════════════════════════════════════════════════════════════════
+const VIEWS = {
+  far: {
+    cols: 8, rows: 4,
+    tiles: null,
+    seg: 40,
+    label: '🌐 Widok ogólny · siatka 15°',
+    dir: 'tiles/far',
+  },
+  near: {
+    cols: 72, rows: 36,
+    tiles: null,
+    seg: 60,
+    label: '🔍 Widok szczegółowy · siatka 5°',
+    dir: 'tiles/near',
+  },
+};
+
+// Ścieżki do kafelków polarnych (gnomonicznych)
+const POLAR_TILES = {
+  north: 'tiles/polar_n.webp',
+  south: 'tiles/polar_s.webp',
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ŁADOWANIE WIDOKU — loadView()
+// ═══════════════════════════════════════════════════════════════════════
+const groupCache = {};  // cache: name → THREE.Group
+const maxAniso   = renderer.capabilities.getMaxAnisotropy();
+
+// ── Pomocnik: załaduj teksturę z URL lub użyj fallback canvas ──
+function loadTexture(src, fallbackFn, onDone) {
+  const img = new Image();
+  img.onload = () => {
+    const tex = new THREE.Texture(img);
+    tex.anisotropy      = maxAniso;
+    tex.minFilter       = THREE.LinearMipmapLinearFilter;
+    tex.magFilter       = THREE.LinearFilter;
+    tex.generateMipmaps = true;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.needsUpdate     = true;
+    onDone(tex);
+  };
+  img.onerror = () => {
+    const cv  = fallbackFn();
+    const tex = new THREE.CanvasTexture(cv);
+    tex.anisotropy = maxAniso;
+    onDone(tex);
+  };
+  img.src = src;
+}
+
+// ── Fallback: kolorowa siatka dla kafelka equirectangular ──
+// diagColor: opcjonalny kolor diagnostyczny nadpisujący losowy hue
+function makeTileFallback(col, row, cols, rows, diagColor) {
+  const cv  = document.createElement('canvas');
+  cv.width  = cv.height = 256;
+  const ctx = cv.getContext('2d');
+  const hue = (col / cols * 360 + row * 30) % 360;
+  ctx.fillStyle = diagColor || `hsl(${hue},40%,22%)`;
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.strokeStyle = diagColor ? 'rgba(255,255,255,0.7)' : `hsl(${hue},60%,55%)`;
+  ctx.lineWidth = diagColor ? 8 : 3;
+  ctx.strokeRect(6, 6, 244, 244);
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  if (diagColor) {
+    // Tryb diagnostyczny — duży napis z nazwą widoku
+    const label = diagColor === '#cc2200' ? 'FAR' : 'NEAR';
+    ctx.font = 'bold 72px sans-serif';
+    ctx.fillText(label, 128, 148);
+  } else {
+    ctx.font = `bold 28px sans-serif`;
+    ctx.fillStyle = `hsl(${hue},70%,75%)`;
+    ctx.fillText(`${row},${col}`, 128, 100);
+    ctx.font = '18px sans-serif';
+    ctx.fillText(`lon ${Math.round(-180 + col*360/cols)}°`, 128, 140);
+    ctx.fillText(`lat ${Math.round(90 - row*180/rows)}°`, 128, 165);
+  }
+  return cv;
+}
+
+// ── Fallback: proceduralna tekstura polarna gnomoniczna ──
+function makePolarFallback(isNorth) {
+  const size = 512;
+  const cv   = document.createElement('canvas');
+  cv.width   = cv.height = size;
+  const ctx  = cv.getContext('2d');
+  const cx   = size / 2, cy = size / 2;
+
+  // Gradient tła — ocean polarny
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, size / 2);
+  grad.addColorStop(0,   isNorth ? '#c8dff0' : '#d0e8d0'); // lód / ląd
+  grad.addColorStop(0.5, isNorth ? '#7ab4d8' : '#8dc88a');
+  grad.addColorStop(1,   isNorth ? '#2a6090' : '#3a8050');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  // Siatka południkowa gnomoniczna (promienie od centrum)
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  for (let a = 0; a < 360; a += 30) {
+    const rad = a * Math.PI / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(rad) * size * 0.5, cy + Math.sin(rad) * size * 0.5);
+    ctx.stroke();
+  }
+  // Okręgi równoleżnikowe
+  for (let r = 0.2; r <= 1.0; r += 0.2) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * size * 0.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Biegun w centrum
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1a3a5a';
+  ctx.font = 'bold 14px Cinzel,serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(isNorth ? 'N' : 'S', cx, cy);
+
+  // Etykieta
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.font = '13px sans-serif';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(`Biegun ${isNorth ? 'Północny' : 'Południowy'}`, cx, cy + 40);
+  ctx.fillText(`(rzut gnomoniczny)`, cx, cy + 58);
+
+  return cv;
+}
+
+// ── Czapy polarne — ładowane raz, niezależnie od widoku ──
+// Dodawane bezpośrednio do globeGroup (nie do grupy widoku),
+// żeby nie były usuwane przy przełączaniu FAR/NEAR.
+let polarGroup = null;
+
+function loadPolarCaps() {
+  if (polarGroup) return; // już załadowane
+  polarGroup = new THREE.Group();
+
+  const polarVert = `
+    varying vec2 vUv;
+    varying float vAlpha;
+    attribute vec4 color;
+    void main() {
+      vUv    = uv;
+      vAlpha = color.a;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `;
+  const polarFrag = `
+    uniform sampler2D map;
+    varying vec2 vUv;
+    varying float vAlpha;
+    void main() {
+      vec4 c = texture2D(map, vUv);
+      gl_FragColor = vec4(c.rgb, c.a * vAlpha);
+    }
+  `;
+
+  [true, false].forEach(isNorth => {
+    const src = isNorth ? POLAR_TILES.north : POLAR_TILES.south;
+    loadTexture(
+      src,
+      () => makePolarFallback(isNorth),
+      (tex) => {
+        const geo = buildPolarCapGeo(isNorth, 64, 128);
+        const mat = new THREE.ShaderMaterial({
+          uniforms:       { map: { value: tex } },
+          vertexShader:   polarVert,
+          fragmentShader: polarFrag,
+          transparent:    true,
+          depthWrite:     false,
+          depthTest:      false, // nie sprawdzaj depth buffora — czapa zawsze rysuje się na wierzchu kafelków
+          side:           THREE.BackSide,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 1; // renderuj po kafelkach
+        polarGroup.add(mesh);
+        // Dodaj do sceny po załadowaniu pierwszej czapy
+        if (!globeGroup.children.includes(polarGroup)) {
+          globeGroup.add(polarGroup);
+        }
+        loader.tick(); // czapa polarna załadowana
+      }
+    );
+  });
+}
+
+// Przechowuje listę callbacków oczekujących na załadowanie danego widoku (in-flight)
+const loadingCallbacks = {}; // name → [{isCancelled, onDone}]
+
+function loadView(name, isCancelled, onDone) {
+  if (groupCache[name]) {
+    console.log(`[loadView] ${name}: FROM CACHE, calling onDone`);
+    setTimeout(() => onDone(groupCache[name]), 0);
+    return;
+  }
+
+  if (loadingCallbacks[name]) {
+    console.log(`[loadView] ${name}: already in-flight, queuing callback`);
+    loadingCallbacks[name].push({ isCancelled, onDone });
+    return;
+  }
+
+  loadingCallbacks[name] = [{ isCancelled, onDone }];
+
+  const cfg    = VIEWS[name];
+  const group  = new THREE.Group();
+  const needed = cfg.cols * cfg.rows;
+  let   total  = 0;
+
+  console.log(`[loadView] ${name}: START loading ${needed} tiles`);
+
+  function checkDone() {
+    loader.tick(); // każdy kafelek (FAR lub NEAR) liczy się do paska
+    total++;
+    if (total === needed) {
+      const callbacks = loadingCallbacks[name] || [];
+      delete loadingCallbacks[name];
+
+      const active = callbacks.filter(cb => !cb.isCancelled());
+      if (active.length === 0) {
+        console.log(`[loadView] ${name}: ALL DONE but all callbacks CANCELLED, discarding`);
+        return;
+      }
+      console.log(`[loadView] ${name}: ALL DONE, meshes=${group.children.length}, notifying ${active.length} callback(s)`);
+      groupCache[name] = group;
+      active.forEach(cb => cb.onDone(group));
+    }
+  }
+
+  // ── Kafelki equirectangular ──
+  for (let row = 0; row < cfg.rows; row++) {
+    for (let col = 0; col < cfg.cols; col++) {
+      const key = `${row}_${col}`;
+      const src = cfg.tiles
+        ? cfg.tiles[key]
+        : `${cfg.dir}/${row}_${col}.webp`;
+
+      const r = row, c = col;
+      loadTexture(
+        src,
+        () => makeTileFallback(c, r, cfg.cols, cfg.rows, cfg.diagColor),
+        (tex) => {
+          // Porzuć kafelek jeśli wszystkie oczekujące callbacki są już anulowane
+          const pendingCbs = loadingCallbacks[name] || [];
+          const anyActive  = pendingCbs.some(cb => !cb.isCancelled());
+          if (!anyActive) {
+            console.warn(`[tile ${name} ${r}_${c}] all callbacks CANCELLED, skipping`);
+            checkDone();
+            return;
+          }
+          const segW = Math.max(8, Math.round(cfg.seg / cfg.cols));
+          const segH = Math.max(8, Math.round(cfg.seg / cfg.rows));
+          const geo  = buildTileGeo(c, r, cfg.cols, cfg.rows, segW, segH);
+          if (geo.index && geo.index.count > 0) {
+            const mat = new THREE.MeshBasicMaterial({
+              map: tex,
+              side: THREE.FrontSide,
+              polygonOffset: true,
+              polygonOffsetFactor: 1,
+              polygonOffsetUnits: 1,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.userData.tileFile = src; // dla trybu debug
+            group.add(mesh);
+          }
+          checkDone();
+        }
+      );
+    }
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ZARZĄDZANIE WIDOKIEM
+// ═══════════════════════════════════════════════════════════════════════
+let activeGroup = null;
+let activeName  = null;
+let loadSeq     = 0; // sekwencja — każde nowe ładowanie dostaje nowy numer
+
+// ═══════════════════════════════════════════════════════════════════════
+// LOADER — śledzenie postępu
+// Łącznie oczekujemy: kafle FAR + kafle NEAR + 2 czapy polarne.
+// Loader znika gdy wszystkie załadowane I kafle FAR są w scenie.
+// ═══════════════════════════════════════════════════════════════════════
+const loader = (() => {
+  const elBar   = document.getElementById('load-bar');
+  const elCount = document.getElementById('load-count');
+  const elPhase = document.getElementById('load-phase');
+  const elWrap  = document.getElementById('loading');
+
+  const FAR_COUNT  = VIEWS.far.cols  * VIEWS.far.rows;   // 32
+  const NEAR_COUNT = VIEWS.near.cols * VIEWS.near.rows;  // 2592
+  const TOTAL      = FAR_COUNT + NEAR_COUNT + 2;         // + 2 czapy
+
+  let done       = 0;
+  let farInScene = false;
+  let dismissed  = false;
+
+  function refresh() {
+    if (dismissed) return;
+    const pct = Math.min(100, Math.round((done / TOTAL) * 100));
+    elBar.style.width   = pct + '%';
+    elCount.textContent = `${done} / ${TOTAL}`;
+
+    if (done < FAR_COUNT)
+      elPhase.textContent = 'Ładowanie widoku ogólnego…';
+    else if (done < FAR_COUNT + 2)
+      elPhase.textContent = 'Ładowanie czap polarnych…';
+    else if (done < TOTAL)
+      elPhase.textContent = 'Ładowanie widoku szczegółowego…';
+  }
+
+  function tryDismiss() {
+    if (dismissed) return;
+    if (farInScene && done >= FAR_COUNT + 2) {
+      // FAR + polary gotowe — chowamy loader, NEAR doładowuje się w tle
+      dismissed = true;
+      elPhase.textContent = 'Gotowe';
+      elBar.style.width = '100%';
+      setTimeout(() => {
+        elWrap.classList.add('out');
+        setTimeout(() => elWrap.remove(), 900);
+      }, 150);
+    }
+  }
+
+  return {
+    tick() {
+      done++;
+      refresh();
+      tryDismiss();
+    },
+    farReady() {
+      farInScene = true;
+      tryDismiss();
+    },
+  };
+})();
+
+function setView(name) {
+  if (name === activeName) return;
+
+  activeName = name;
+  document.getElementById('badge-view').textContent = VIEWS[name].label;
+
+  const mySeq = ++loadSeq;
+  console.log(`[setView] ${name} seq=${mySeq}`);
+
+  const isCancelled = () => mySeq !== loadSeq;
+
+  loadView(name, isCancelled, (group) => {
+    console.log(`[setView cb] ${name} seq=${mySeq} → ${isCancelled() ? 'IGNORED' : 'APPLIED'}`);
+    if (isCancelled()) return;
+    const toRemove = globeGroup.children.filter(c => c !== polarGroup);
+    toRemove.forEach(c => globeGroup.remove(c));
+    globeGroup.remove(group);
+    activeGroup = group;
+    globeGroup.add(group);
+
+    // FAR załadowany i w scenie — sygnał do loadera
+    if (name === 'far') {
+      loader.farReady();
+      // Zacznij cicho pre-fetchować NEAR w tle (nie blokuje loadera)
+      if (!groupCache['near'] && !loadingCallbacks['near']) {
+        const noop = () => false; // nigdy nie anulowany — pre-fetch zawsze kończymy
+        loadView('near', noop, () => {
+          console.log('[prefetch] near: done');
+        });
+      }
+    }
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ZOOM — dwa poziomy
+// ═══════════════════════════════════════════════════════════════════════
+let targetDist = ZOOM_DIST[0]; // animowana płynnie w render loop
+
+function updateZoomUI() {
+  const btn = document.getElementById('btn-zoom');
+  if (zoomIdx === 0) {
+    btn.textContent = '+';
+    btn.title = 'Zbliż [+]';
+  } else {
+    btn.textContent = '−';
+    btn.title = 'Oddal [−]';
+  }
+}
+
+function doZoom(delta) {
+  const next = zoomIdx + delta;
+  if (next < 0 || next >= ZOOM_DIST.length) return;
+  zoomIdx    = next;
+  targetDist = ZOOM_DIST[zoomIdx];
+  updateZoomUI();
+  const viewName = zoomIdx > 0 ? 'near' : 'far';
+  setView(viewName);
+}
+
+// Klawiatura
+window.addEventListener('keydown', e => {
+  if (e.key === '+' || e.key === '=') doZoom(1);
+  if (e.key === '-' || e.key === '_') doZoom(-1);
+});
+// Scroll kółkiem myszy
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  doZoom(e.deltaY < 0 ? 1 : -1);
+}, { passive: false });
+// Podwójne kliknięcie — zbliż (jeśli daleko) lub oddal (jeśli blisko)
+canvas.addEventListener('dblclick', e => {
+  e.preventDefault();
+  doZoom(zoomIdx === 0 ? 1 : -1);
+});
+
+updateZoomUI();
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════
+// TRYB DEBUG — raycasting + tint kafelka pod kursorem
+// ═══════════════════════════════════════════════════════════════════════
+const dbgTooltip  = document.getElementById('dbg-tooltip');
+const dbgRaycaster = new THREE.Raycaster();
+const dbgMouse     = new THREE.Vector2();
+let   dbgLastMesh  = null;
+
+const DBG_TINT = new THREE.Color(0xff6633); // kolor tintu (pomarańczowo-czerwony)
+
+function dbgGetTileMeshes() {
+  if (!activeGroup) return [];
+  return activeGroup.children.filter(m => m.userData.tileFile);
+}
+
+function dbgClearTint() {
+  if (dbgLastMesh) {
+    dbgLastMesh.material.color.set(0xffffff);
+    dbgLastMesh = null;
+  }
+}
+
+function dbgUpdate(mouseEvent) {
+  if (!DEBUG) return;
+
+  const rect = canvas.getBoundingClientRect();
+  dbgMouse.x =  ((mouseEvent.clientX - rect.left) / rect.width)  * 2 - 1;
+  dbgMouse.y = -((mouseEvent.clientY - rect.top)  / rect.height) * 2 + 1;
+
+  dbgRaycaster.setFromCamera(dbgMouse, camera);
+  const hits = dbgRaycaster.intersectObjects(dbgGetTileMeshes(), false);
+
+  if (hits.length === 0) {
+    dbgTooltip.style.display = 'none';
+    dbgClearTint();
+    return;
+  }
+
+  const mesh = hits[0].object;
+
+  // Zmień tint tylko gdy wchodzimy na nowy kafelek
+  if (mesh !== dbgLastMesh) {
+    dbgClearTint();
+    mesh.material.color.copy(DBG_TINT);
+    dbgLastMesh = mesh;
+  }
+
+  // Tooltip z pełną ścieżką pliku
+  dbgTooltip.textContent = mesh.userData.tileFile;
+  dbgTooltip.style.display = 'block';
+  const tx = Math.min(mouseEvent.clientX + 14, window.innerWidth  - dbgTooltip.offsetWidth  - 8);
+  const ty = Math.max(mouseEvent.clientY - 32, 8);
+  dbgTooltip.style.left = tx + 'px';
+  dbgTooltip.style.top  = ty + 'px';
+}
+
+// Aktywuj tylko gdy DEBUG=true
+if (DEBUG) {
+  canvas.addEventListener('mousemove', dbgUpdate);
+  canvas.addEventListener('mouseleave', () => {
+    dbgTooltip.style.display = 'none';
+    dbgClearTint();
+  });
+  document.querySelector('#badge-view').style.borderColor = '#ff4444';
+  console.info('%c[DEBUG MODE ON]', 'color:#ff4444;font-weight:bold');
+}
+
+
+
+let dragging = false, lastX = 0, lastY = 0, velX = 0, velY = 0;
+const DAMP  = 0.90;  // tłumienie inercji (0=brak, 1=natychmiastowe zatrzymanie)
+const SPEED = 0.005; // czułość obrotu (rad/pixel)
+
+// Mysz
+canvas.addEventListener('mousedown', e => {
+  dragging = true; velX = velY = 0;
+  lastX = e.clientX; lastY = e.clientY;
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  velY = (e.clientX - lastX) * SPEED; // poziomy ruch → obrót Y (lon)
+  velX = (e.clientY - lastY) * SPEED; // pionowy ruch  → obrót X (lat)
+  globeGroup.rotation.y += velY;
+  globeGroup.rotation.x += velX;
+  lastX = e.clientX; lastY = e.clientY;
+  refreshCoords();
+});
+
+// Dotyk (mobile)
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length !== 1) return;
+  dragging = true; velX = velY = 0;
+  lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+}, { passive: true });
+window.addEventListener('touchend', () => { dragging = false; });
+window.addEventListener('touchmove', e => {
+  if (!dragging || e.touches.length !== 1) return;
+  velY = (e.touches[0].clientX - lastX) * SPEED;
+  velX = (e.touches[0].clientY - lastY) * SPEED;
+  globeGroup.rotation.y += velY;
+  globeGroup.rotation.x += velX;
+  lastX = e.touches[0].clientX; lastY = e.touches[0].clientY;
+  refreshCoords();
+}, { passive: true });
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// WYŚWIETLANIE KOORDYNATÓW
+// ═══════════════════════════════════════════════════════════════════════
+function fmtLat(v) {
+  v = Math.max(-90, Math.min(90, v));
+  return `${Math.abs(v).toFixed(1)}°${v >= 0 ? 'N' : 'S'}`;
+}
+function fmtLon(v) {
+  v = ((v + 180) % 360 + 360) % 360 - 180; // normalizacja do [-180, 180]
+  return `${Math.abs(v).toFixed(1)}°${v >= 0 ? 'E' : 'W'}`;
+}
+
+function refreshCoords() {
+  // Lat: obrót X globu = -lat (obrót w górę = południe do przodu)
+  const lat = -THREE.MathUtils.radToDeg(globeGroup.rotation.x);
+
+  // Lon: NEGACJA rotation.y — geometria ma odwróconą oś phi (phiStart = PI-...),
+  // więc surowy rotation.y jest lustrzany. Negacja kompensuje ten efekt.
+  const lon = -THREE.MathUtils.radToDeg(globeGroup.rotation.y);
+
+  document.getElementById('coords').textContent =
+    `Centrum: ${fmtLat(lat)}  ${fmtLon(lon)}`;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════════════════════
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Inercja obrotu — stosowana tylko gdy nie przeciągamy
+  if (!dragging) {
+    globeGroup.rotation.x += velX;
+    globeGroup.rotation.y += velY;
+    velX *= DAMP;
+    velY *= DAMP;
+    if (Math.abs(velX) + Math.abs(velY) > 4e-5) refreshCoords();
+  }
+
+  // Ogranicz obrót X aby nie "przekręcić" globu przez bieguny
+  globeGroup.rotation.x = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, globeGroup.rotation.x));
+
+  // Płynne dojście kamery do docelowej odległości (lerp)
+  camera.position.z += (targetDist - camera.position.z) * 0.09;
+
+  renderer.render(scene, camera);
+}
+
+
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════════════════
+loadPolarCaps();
+setView('far');
+animate();
+</script>
+</body>
+</html>

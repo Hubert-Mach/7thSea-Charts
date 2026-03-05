@@ -1,0 +1,352 @@
+{
+    "FancyFrames_010": {
+        "name": "Fancy Frames 010",
+        "radius": 237,
+        "offset_x": 0,
+        "offset_y": -109,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_006": {
+        "name": "Fancy Frames 006",
+        "radius": 284,
+        "offset_x": 0,
+        "offset_y": -102,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_015": {
+        "name": "Fancy Frames 015",
+        "radius": 378,
+        "offset_x": 0,
+        "offset_y": -176,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_001": {
+        "name": "Fancy Frames 001",
+        "radius": 494,
+        "offset_x": 0,
+        "offset_y": -168,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_026": {
+        "name": "Fancy Frames 026",
+        "radius": 349,
+        "offset_x": 0,
+        "offset_y": -107,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_014": {
+        "name": "Fancy Frames 014",
+        "radius": 348,
+        "offset_x": 0,
+        "offset_y": -136,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_012": {
+        "name": "Fancy Frames 012",
+        "radius": 294,
+        "offset_x": 0,
+        "offset_y": -89,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_029": {
+        "name": "Fancy Frames 029",
+        "radius": 203,
+        "offset_x": 0,
+        "offset_y": -63,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_047": {
+        "name": "Fancy Frames 047",
+        "radius": 867,
+        "offset_x": 0,
+        "offset_y": -334,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_040": {
+        "name": "Fancy Frames 040",
+        "radius": 606,
+        "offset_x": 0,
+        "offset_y": -207,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_017": {
+        "name": "Fancy Frames 017",
+        "radius": 655,
+        "offset_x": 0,
+        "offset_y": -303,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_022": {
+        "name": "Fancy Frames 022",
+        "radius": 200,
+        "offset_x": 0,
+        "offset_y": -38,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_035": {
+        "name": "Fancy Frames 035",
+        "radius": 264,
+        "offset_x": 0,
+        "offset_y": -92,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_050": {
+        "name": "Fancy Frames 050",
+        "radius": 281,
+        "offset_x": 0,
+        "offset_y": -20,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_028": {
+        "name": "Fancy Frames 028",
+        "radius": 251,
+        "offset_x": 0,
+        "offset_y": -70,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_043": {
+        "name": "Fancy Frames 043",
+        "radius": 518,
+        "offset_x": 0,
+        "offset_y": -147,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_025": {
+        "name": "Fancy Frames 025",
+        "radius": 236,
+        "offset_x": 0,
+        "offset_y": -67,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_024": {
+        "name": "Fancy Frames 024",
+        "radius": 357,
+        "offset_x": 0,
+        "offset_y": -293,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_034": {
+        "name": "Fancy Frames 034",
+        "radius": 470,
+        "offset_x": 0,
+        "offset_y": -200,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_021": {
+        "name": "Fancy Frames 021",
+        "radius": 508,
+        "offset_x": 0,
+        "offset_y": -187,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_032": {
+        "name": "Fancy Frames 032",
+        "radius": 341,
+        "offset_x": 0,
+        "offset_y": -161,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_016": {
+        "name": "Fancy Frames 016",
+        "radius": 684,
+        "offset_x": 0,
+        "offset_y": -302,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_023": {
+        "name": "Fancy Frames 023",
+        "radius": 238,
+        "offset_x": 0,
+        "offset_y": -169,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_011": {
+        "name": "Fancy Frames 011",
+        "radius": 217,
+        "offset_x": 0,
+        "offset_y": -68,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_030": {
+        "name": "Fancy Frames 030",
+        "radius": 338,
+        "offset_x": 0,
+        "offset_y": -158,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_038": {
+        "name": "Fancy Frames 038",
+        "radius": 600,
+        "offset_x": 0,
+        "offset_y": -505,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_046": {
+        "name": "Fancy Frames 046",
+        "radius": 706,
+        "offset_x": 0,
+        "offset_y": -249,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_037": {
+        "name": "Fancy Frames 037",
+        "radius": 244,
+        "offset_x": 0,
+        "offset_y": -58,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_013": {
+        "name": "Fancy Frames 013",
+        "radius": 226,
+        "offset_x": 0,
+        "offset_y": -93,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_019": {
+        "name": "Fancy Frames 019",
+        "radius": 532,
+        "offset_x": 0,
+        "offset_y": -373,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_009": {
+        "name": "Fancy Frames 009",
+        "radius": 492,
+        "offset_x": 0,
+        "offset_y": -227,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_042": {
+        "name": "Fancy Frames 042",
+        "radius": 618,
+        "offset_x": 0,
+        "offset_y": -545,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_031": {
+        "name": "Fancy Frames 031",
+        "radius": 509,
+        "offset_x": 0,
+        "offset_y": -193,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_039": {
+        "name": "Fancy Frames 039",
+        "radius": 728,
+        "offset_x": 0,
+        "offset_y": -421,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_041": {
+        "name": "Fancy Frames 041",
+        "radius": 476,
+        "offset_x": 0,
+        "offset_y": -126,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_020": {
+        "name": "Fancy Frames 020",
+        "radius": 362,
+        "offset_x": 0,
+        "offset_y": -98,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_018": {
+        "name": "Fancy Frames 018",
+        "radius": 386,
+        "offset_x": 0,
+        "offset_y": -295,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_044": {
+        "name": "Fancy Frames 044",
+        "radius": 843,
+        "offset_x": 0,
+        "offset_y": -373,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_007": {
+        "name": "Fancy Frames 007",
+        "radius": 489,
+        "offset_x": 0,
+        "offset_y": -161,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_048": {
+        "name": "Fancy Frames 048",
+        "radius": 848,
+        "offset_x": 0,
+        "offset_y": -612,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_033": {
+        "name": "Fancy Frames 033",
+        "radius": 186,
+        "offset_x": 0,
+        "offset_y": -30,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_049": {
+        "name": "Fancy Frames 049",
+        "radius": 781,
+        "offset_x": 0,
+        "offset_y": -265,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_045": {
+        "name": "Fancy Frames 045",
+        "radius": 794,
+        "offset_x": 0,
+        "offset_y": -316,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_036": {
+        "name": "Fancy Frames 036",
+        "radius": 396,
+        "offset_x": 0,
+        "offset_y": -257,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_005": {
+        "name": "Fancy Frames 005",
+        "radius": 522,
+        "offset_x": 0,
+        "offset_y": -279,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_008": {
+        "name": "Fancy Frames 008",
+        "radius": 294,
+        "offset_x": 0,
+        "offset_y": -116,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_003": {
+        "name": "Fancy Frames 003",
+        "radius": 378,
+        "offset_x": 0,
+        "offset_y": -158,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_002": {
+        "name": "Fancy Frames 002",
+        "radius": 345,
+        "offset_x": 0,
+        "offset_y": -230,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_027": {
+        "name": "Fancy Frames 027",
+        "radius": 526,
+        "offset_x": 0,
+        "offset_y": -318,
+        "draw_mode": "normal"
+    },
+    "FancyFrames_004": {
+        "name": "Fancy Frames 004",
+        "radius": 244,
+        "offset_x": 0,
+        "offset_y": -62,
+        "draw_mode": "normal"
+    }
+}

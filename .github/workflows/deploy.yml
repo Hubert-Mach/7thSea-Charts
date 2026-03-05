@@ -1,0 +1,17 @@
+steps:
+  - name: Checkout
+    uses: actions/checkout@v4
+
+  - name: Prepare files
+    run: |
+      mkdir deploy
+      cp index.html deploy/
+      cp -r assets/ deploy/
+      cp styles.css deploy/
+
+  - name: Deploy to gh-pages
+    uses: peaceiris/actions-gh-pages@v4
+    with:
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      publish_dir: ./deploy
+      publish_branch: gh-pages
