@@ -39,17 +39,23 @@ There are 32 far tiles and 2592 near tiles, plus 2 tiles for polar caps.
 
 Clone repository to your computer.
 
-If you are starting from scratch prepare ONE big map of the world. Make seas and oceans black and lands white. When ready run tile generation script from scripts directory
+If you are starting from scratch prepare map file to be cut into tiles. Make seas and oceans black and lands white. Dimensions: 4096×2048 px. When ready run tile generation script from scripts directory
 
-`python3 gen_tiles.py MAP_FILE.png`
+`python3 gen_tiles.py path-to-map-file.png # far and near tiles`
+`python3 gen_tiles.py path-to-map-file.png --view far # far only tiles`
+`python3 gen_tiles.py path-to-map-file.png --view near # near only tiles`
+`python3 gen_tiles.py mapa.png --out ./tiles # override destination directory with your own`
 
-This will cut image into tiles which are png and will put them into ../tiles_png directory.
 
-If you want to see how it looks like already, run
+This will cut image into tiles which are png and by default will put them into ../tiles_png directory.
 
-`python3 compress_tiles.py ../tiles_png/far --out ../tiles/far --webp-quality 80 --no-png-fallback`
+See how it looks like already. Now is the best time to make any changes to shapes and localizations.
 
-And start local web server
+Run
+
+`python3 compress_tiles.py ../tiles_png/far --out ../tiles/far --webp-quality 50 --no-png-fallback`
+
+And start local web server from project root directory.
 
 `python3 -m http.server 8000`
 
@@ -58,9 +64,9 @@ Check results visiting http:/localhost:8000
 
 ## Workflow
 
-Start with far tiles. Open one and write down its dimensions. Create tiles_wonderdraft/far and tiles_wonderdraf/near directories to put wonderdraft files there.
+Start with far tiles. Create tiles_wonderdraft/far and tiles_wonderdraf/near directories to put wonderdraft files there.
 
-Now open Wonderdraft, create new map with same dimensions as tile. Save it as tile name you are going to work on. Ie far/0_0. Now import this tile to the map. It will create land and sea depending on what is in tile. Update it with details like mountains, trees, ships, names. When done export it as webp with quality of no more than 85 to tiles/far/0_0.webp. 
+Now open Wonderdraft, create new map of size 2048x2048 px. Save it as tile name you are going to work on. Ie far/0_0. Now import this tile to the map. It will create land and sea depending on what is in tile. Update it with details like mountains, trees, ships, names. When done export it as webp with quality of no more than 85 (50 is acceptable) to tiles/far/0_0.webp. 
 
 You can see the progress by launching local web server (see above) and visiting http:/localhost:8000.
 
