@@ -240,6 +240,14 @@ canvas#c:active{cursor:grabbing;}
 
   <!-- Debug mode tooltip -->
   <div id="dbg-tooltip"></div>
+
+  <!-- Legend image — bottom right corner -->
+  <img id="legend" src="legend.png"
+       style="position:absolute;bottom:48px;right:48px;z-index:8;
+              max-width:260px;max-height:40vh;
+              pointer-events:none;"
+       onerror="this.style.display='none'"
+       alt="Legenda">
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
