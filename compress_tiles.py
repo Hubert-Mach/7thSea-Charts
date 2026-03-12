@@ -46,7 +46,7 @@ def load_grid(src_dir):
     candidate = Path(__file__).parent / 'grid.json'
     if not candidate.exists():
         print("   ⚠️  grid.json not found — no lat correction, assuming tile_out=1024, no split")
-        return 1024, [], 1024
+        return 1024, [], 1024, 0
     grid      = json.loads(candidate.read_text())
     tile_out  = grid['tile_out']
     view_name = src_dir.name
@@ -70,7 +70,24 @@ def load_grid(src_dir):
         sub_rows = view_cfg.get('rows', 0) * split
         print(f"   subtiling : {tile_out}px → {split}×{split} × {subtile}px  "
               f"({sub_cols}×{sub_rows} = {sub_cols*sub_rows} output tiles)")
-    return tile_out, corrections, subtile
+
+    # Count polar-skipped rows (only relevant for lat_stretch views)
+    skipped_rows = 0
+    polar_cap = grid.get('polar_lat_cap')
+    if view_cfg.get('lat_stretch', False) and polar_cap is not None:
+        rows = view_cfg.get('rows', 0)
+        cols = view_cfg.get('cols', 0)
+        for r in range(rows):
+            deg_per_row = 180.0 / rows
+            lat_top = 90.0 - r * deg_per_row
+            lat_bot = 90.0 - (r + 1) * deg_per_row
+            if lat_bot >= polar_cap or lat_top <= -polar_cap:
+                skipped_rows += 1
+        if skipped_rows:
+            skipped_tiles = skipped_rows * cols * split * split
+            print(f"   polar skip: {skipped_rows} rows ({skipped_tiles} sub-tiles not generated, cap={polar_cap}°)")
+
+    return tile_out, corrections, subtile, skipped_rows
 
 
 def row_from_name(name):
@@ -144,7 +161,7 @@ def run(args):
     dst_dir = Path(args.out) if args.out else src_dir.parent / (src_dir.name + '_compressed')
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    tile_out, row_corrections, subtile_size = load_grid(src_dir)
+    tile_out, row_corrections, subtile_size, skipped_rows = load_grid(src_dir)
     split = tile_out // subtile_size
 
     png_files = sorted(src_dir.glob('*.png'))

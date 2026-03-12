@@ -438,15 +438,17 @@ onResize();
 //                and the equirectangular tile from alpha=1 to alpha=0.
 //                Eliminates visible seams without z-fighting artifacts.
 //
-const LAT_CAP_DEG  = 60;
-const BLEND_DEG    = 2;
-const LAT_CAP_RAD  = THREE.MathUtils.degToRad(LAT_CAP_DEG);
-const BLEND_RAD    = THREE.MathUtils.degToRad(BLEND_DEG);
+// NOTE: These values are defaults — applyGridJson() may override LAT_CAP_DEG
+// from grid.json (polar_lat_cap field) to keep Python and JS in sync.
+let LAT_CAP_DEG  = 60;
+let BLEND_DEG    = 2;
+let LAT_CAP_RAD  = THREE.MathUtils.degToRad(LAT_CAP_DEG);
+let BLEND_RAD    = THREE.MathUtils.degToRad(BLEND_DEG);
 // theta (from north pole) corresponding to the cap boundary:
 //   theta = π/2 − lat,  lat=60° → theta=30°
-const THETA_CAP_N  = Math.PI / 2 - LAT_CAP_RAD;        // ~0.5236 rad (biegun N)
-const THETA_CAP_S  = Math.PI - THETA_CAP_N;             // ~2.618  rad (biegun S)
-const THETA_BLEND  = BLEND_RAD;                         // blend zone width
+let THETA_CAP_N  = Math.PI / 2 - LAT_CAP_RAD;        // ~0.5236 rad (biegun N)
+let THETA_CAP_S  = Math.PI - THETA_CAP_N;             // ~2.618  rad (biegun S)
+let THETA_BLEND  = BLEND_RAD;                         // blend zone width
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -727,6 +729,14 @@ const POLAR_TILES = {
       const subtile   = grid.subtile_size || tileOut;
       const split     = Math.round(tileOut / subtile);  // e.g. 4 for 1024→256
 
+      // Sync polar cap boundary with gen_tiles.py / gen_polar_tiles.py
+      if (grid.polar_lat_cap != null) {
+        LAT_CAP_DEG = grid.polar_lat_cap;
+        LAT_CAP_RAD = THREE.MathUtils.degToRad(LAT_CAP_DEG);
+        THETA_CAP_N = Math.PI / 2 - LAT_CAP_RAD;
+        THETA_CAP_S = Math.PI - THETA_CAP_N;
+      }
+
       ['far', 'near'].forEach(v => {
         const g = grid.views && grid.views[v];
         if (!g) return;
@@ -747,7 +757,8 @@ const POLAR_TILES = {
       });
       console.log(`[grid.json] far=${VIEWS.far.cols}×${VIEWS.far.rows}  `
                 + `near=${VIEWS.near.cols}×${VIEWS.near.rows}  `
-                + `subtile=${subtile}px (split=${split}×${split})`);
+                + `subtile=${subtile}px (split=${split}×${split})`
+                + (grid.polar_lat_cap != null ? `  polar_lat_cap=${grid.polar_lat_cap}°` : ''));
     }
   } catch(e) {
     console.warn('[grid.json] Not loaded — using fallback VIEWS', e);

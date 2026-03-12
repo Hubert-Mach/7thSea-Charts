@@ -1,6 +1,7 @@
 {
   "tile_out": 1024,
   "max_correction": 8.0,
+  "polar_lat_cap": 60,
   "views": {
     "far": {
       "cols": 8,

@@ -61,7 +61,32 @@ def lat_correction(row, rows, max_correction):
     return min(1.0 / math.cos(math.radians(lat_mid)), max_correction)
 
 
-def gen_view(norm_img, view_name, view_cfg, tile_out, max_correction, out_dir):
+def polar_row_visible(row, rows, polar_lat_cap):
+    """
+    Returns True if the tile row is at least partially visible
+    (not entirely covered by a polar cap).
+
+    A row is FULLY covered when its entire latitude range lies at or beyond
+    the polar cap boundary:
+      - North cap: lat_bottom >= polar_lat_cap  (both edges north of cap)
+      - South cap: lat_top    <= -polar_lat_cap (both edges south of cap)
+
+    Because grid boundaries land exactly on the cap edge (5° tiles, cap=60°)
+    there is no partial-overlap case — every row is either fully inside or
+    fully outside the cap.
+    """
+    deg_per_row = 180.0 / rows
+    lat_top = 90.0 - row * deg_per_row
+    lat_bot = 90.0 - (row + 1) * deg_per_row
+    if lat_bot >= polar_lat_cap:   # fully under north cap
+        return False
+    if lat_top <= -polar_lat_cap:  # fully under south cap
+        return False
+    return True
+
+
+def gen_view(norm_img, view_name, view_cfg, tile_out, max_correction, out_dir,
+             polar_lat_cap=None):
     cols        = view_cfg['cols']
     rows        = view_cfg['rows']
     lat_stretch = view_cfg['lat_stretch']
@@ -74,13 +99,33 @@ def gen_view(norm_img, view_name, view_cfg, tile_out, max_correction, out_dir):
     tile_out_dir = Path(out_dir) / view_name
     tile_out_dir.mkdir(parents=True, exist_ok=True)
 
-    total = rows * cols
+    # Determine which rows to skip (polar cap optimisation — lat_stretch views only)
+    if lat_stretch and polar_lat_cap is not None:
+        skip_rows = {r for r in range(rows)
+                     if not polar_row_visible(r, rows, polar_lat_cap)}
+    else:
+        skip_rows = set()
+
+    total        = rows * cols
+    skipped      = len(skip_rows) * cols
+    generated    = total - skipped
+    skip_info    = (f", skipping {len(skip_rows)} polar rows ({skipped} tiles)"
+                    if skip_rows else "")
     print(f"  [{view_name}] {cols}×{rows} = {total} tiles  "
           f"(source {tile_src_w}×{tile_src_h}px → {tile_out}×H px"
           + (" lat-stretched" if lat_stretch else f", H={tile_out}") +
-          f")  [{view_cfg['desc']}]")
+          f")  [{view_cfg['desc']}]{skip_info}")
+    if skip_rows:
+        print(f"    Polar skip (cap={polar_lat_cap}°): "
+              f"rows {sorted(skip_rows)[:6]}{'…' if len(skip_rows) > 6 else ''} "
+              f"(N) + "
+              f"rows {sorted(skip_rows)[-6:][::-1][:6][::-1]}"
+              f"{'…' if len(skip_rows) > 6 else ''} (S)  → {generated} tiles generated")
 
     for row in range(rows):
+        if row in skip_rows:
+            continue  # ← kafelek pod czapą polarną — pomijamy
+
         correction = lat_correction(row, rows, max_correction) if lat_stretch else 1.0
         out_h      = round(tile_out * correction)
         scale_y    = out_h / tile_src_h
@@ -107,12 +152,12 @@ def gen_view(norm_img, view_name, view_cfg, tile_out, max_correction, out_dir):
 
             tile.save(tile_out_dir / f"{row}_{col}.png", 'PNG', optimize=True)
 
-        done = (row + 1) * cols
-        pct  = done * 100 // total
-        bar  = '#' * (pct // 5) + '.' * (20 - pct // 5)
-        print(f"\r    [{bar}] {pct:3d}%  ({done}/{total})", end='', flush=True)
+        done_rows = row + 1 - sum(1 for r in skip_rows if r <= row)
+        pct  = done_rows * 100 // max(generated // cols, 1)
+        bar  = '#' * min(20, pct // 5) + '.' * max(0, 20 - pct // 5)
+        print(f"\r    [{bar}] {pct:3d}%  ({done_rows * cols}/{generated})", end='', flush=True)
 
-    print(f"\r  [{view_name}] Done — {total} tiles → {tile_out_dir}/          ")
+    print(f"\r  [{view_name}] Done — {generated}/{total} tiles generated → {tile_out_dir}/          ")
 
 
 def gen_tiles(src_path, grid_path, view='all', out_dir=DEFAULT_OUT_DIR):
@@ -124,6 +169,7 @@ def gen_tiles(src_path, grid_path, view='all', out_dir=DEFAULT_OUT_DIR):
     grid        = load_grid(grid_path)
     tile_out    = grid['tile_out']
     max_corr    = grid['max_correction']
+    polar_cap   = grid.get('polar_lat_cap', None)
     norm_w      = tile_out * grid['views']['far']['cols']   # e.g. 1024*8 = 8192
     norm_h      = tile_out * grid['views']['far']['rows']   # e.g. 1024*4 = 4096
 
@@ -145,7 +191,8 @@ def gen_tiles(src_path, grid_path, view='all', out_dir=DEFAULT_OUT_DIR):
                     else [(view, grid['views'][view])])
 
     for view_name, view_cfg in views_to_run:
-        gen_view(norm_img, view_name, view_cfg, tile_out, max_corr, out_dir)
+        gen_view(norm_img, view_name, view_cfg, tile_out, max_corr, out_dir,
+                 polar_lat_cap=polar_cap)
 
     print("\nDone!")
 
