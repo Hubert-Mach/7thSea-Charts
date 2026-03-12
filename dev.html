@@ -65,7 +65,7 @@
   gen_tiles.py        — equirectangular tile generator
   gen_polar_tiles.py  — polar tile generator (gnomonic projection)
   tiles/far/          — 32 FAR equirectangular tiles
-  tiles/near/         — 2592 NEAR equirectangular tiles
+  tiles/near/         — NEAR equirectangular tiles (count from grid.json)
   tiles/polar_n.webp  — north polar cap (gnomonic, 2048×2048)
   tiles/polar_s.webp  — south polar cap (gnomonic, 2048×2048)
 
@@ -689,20 +689,17 @@ function buildPolarCapGeo(isNorth, segR, segPhi) {
 // ═══════════════════════════════════════════════════════════════════════
 // VIEW CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════
-// VIEWS — must match VIEWS in gen_tiles.py
+// VIEWS — loaded from tiles/grid.json (written by gen_tiles.py).
+// Fallback values used if grid.json is absent (e.g. local dev without tiles).
 // ═══════════════════════════════════════════════════════════════════════
 const VIEWS = {
   far: {
-    cols: 8, rows: 4,
-    tiles: null,
-    seg: 40,
+    cols: 8, rows: 4, seg: 40, tiles: null,
     label: '🌐 General view',
     dir: 'tiles/far',
   },
   near: {
-    cols: 36, rows: 18,
-    tiles: null,
-    seg: 60,
+    cols: 72, rows: 36, seg: 60, tiles: null,
     label: '🔍 Detailed view',
     dir: 'tiles/near',
   },
@@ -713,6 +710,32 @@ const POLAR_TILES = {
   north: 'tiles/polar_n.webp',
   south: 'tiles/polar_s.webp',
 };
+
+// Apply grid.json values if available — runs synchronously via XMLHttpRequest
+// so VIEWS is fully populated before any other code references it.
+(function applyGridJson() {
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', 'tiles/grid.json', false);   // synchronous
+    xhr.send();
+    if (xhr.status === 200) {
+      const grid = JSON.parse(xhr.responseText);
+      ['far', 'near'].forEach(v => {
+        const g = grid.views && grid.views[v];
+        if (!g) return;
+        VIEWS[v].cols = g.cols;
+        VIEWS[v].rows = g.rows;
+        VIEWS[v].seg  = g.seg || VIEWS[v].seg;
+        const dw = (360 / g.cols).toFixed(0);
+        const dh = (180 / g.rows).toFixed(0);
+        if (v === 'near') VIEWS[v].label = `🔍 Detailed view · ${dw}°×${dh}°`;
+      });
+      console.log(`[grid.json] far=${VIEWS.far.cols}×${VIEWS.far.rows}  near=${VIEWS.near.cols}×${VIEWS.near.rows}`);
+    }
+  } catch(e) {
+    console.warn('[grid.json] Not loaded — using fallback VIEWS', e);
+  }
+})();
 
 // ═══════════════════════════════════════════════════════════════════════
 // VIEW LOADING — loadView()
@@ -972,7 +995,7 @@ const loader = (() => {
   const elWrap  = document.getElementById('loading');
 
   const FAR_COUNT  = VIEWS.far.cols  * VIEWS.far.rows;   // 32
-  const NEAR_COUNT = VIEWS.near.cols * VIEWS.near.rows;  // 648
+  const NEAR_COUNT = VIEWS.near.cols * VIEWS.near.rows;  // from grid.json
   const TOTAL      = FAR_COUNT + NEAR_COUNT + 2;         // + 2 polar caps
 
   let done       = 0;
