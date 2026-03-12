@@ -217,6 +217,11 @@ canvas#c:active{cursor:grabbing;}
   <!-- Main Three.js / WebGL canvas -->
   <canvas id="c"></canvas>
 
+  <!-- Coordinates display -->
+  <div id="coords" style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
+    color:rgba(255,255,255,0.7);font:13px/1 monospace;pointer-events:none;
+    text-shadow:0 1px 3px #000;letter-spacing:.04em;"></div>
+
   <!-- Loading screen — disappears after all tiles and polar caps are loaded -->
   <div id="loading">
     <svg class="spin" viewBox="0 0 60 60" fill="none">
@@ -270,14 +275,11 @@ scene.add(new THREE.AmbientLight(0xffffff, 1.0));
 
 // Globe rotates as a group — group rotation = camera orbit around the sphere
 const globeGroup = new THREE.Group();
+// lon=0° of the map sits at phi=0 (the +X axis in sphere geometry).
+// Camera starts at +Z, so rotate the globe 90° around Y so the
+// map's lon=0° faces the camera on startup.
+globeGroup.rotation.y = -Math.PI / 2;
 scene.add(globeGroup);
-
-// Debug: track all additions to globeGroup
-const _origAdd = globeGroup.add.bind(globeGroup);
-globeGroup.add = function(obj) {
-  console.log(`[globeGroup.add] children=${this.children.length}→${this.children.length+1}, obj.children=${obj.children ? obj.children.length : '?'}`, new Error().stack.split('\n')[2].trim());
-  return _origAdd(obj);
-};
 
 // Fit renderer to container size
 function onResize() {
@@ -312,7 +314,7 @@ onResize();
     const mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = -1;
     mesh.isStarfield = true;
-    _origAdd(mesh);
+    globeGroup.add(mesh);
   });
   return; // skip procedural generation below
   // Generate star texture on an offscreen canvas
@@ -419,8 +421,7 @@ onResize();
   mesh.renderOrder = -1;
 
   // Add directly to globeGroup so it rotates with the globe
-  // Use _origAdd to bypass the debug wrapper
-  _origAdd(mesh);
+  globeGroup.add(mesh);
 })();
 
 
@@ -437,15 +438,17 @@ onResize();
 //                and the equirectangular tile from alpha=1 to alpha=0.
 //                Eliminates visible seams without z-fighting artifacts.
 //
-const LAT_CAP_DEG  = 60;
-const BLEND_DEG    = 2;
-const LAT_CAP_RAD  = THREE.MathUtils.degToRad(LAT_CAP_DEG);
-const BLEND_RAD    = THREE.MathUtils.degToRad(BLEND_DEG);
+// NOTE: These values are defaults — applyGridJson() may override LAT_CAP_DEG
+// from grid.json (polar_lat_cap field) to keep Python and JS in sync.
+let LAT_CAP_DEG  = 60;
+let BLEND_DEG    = 2;
+let LAT_CAP_RAD  = THREE.MathUtils.degToRad(LAT_CAP_DEG);
+let BLEND_RAD    = THREE.MathUtils.degToRad(BLEND_DEG);
 // theta (from north pole) corresponding to the cap boundary:
 //   theta = π/2 − lat,  lat=60° → theta=30°
-const THETA_CAP_N  = Math.PI / 2 - LAT_CAP_RAD;        // ~0.5236 rad (biegun N)
-const THETA_CAP_S  = Math.PI - THETA_CAP_N;             // ~2.618  rad (biegun S)
-const THETA_BLEND  = BLEND_RAD;                         // blend zone width
+let THETA_CAP_N  = Math.PI / 2 - LAT_CAP_RAD;        // ~0.5236 rad (biegun N)
+let THETA_CAP_S  = Math.PI - THETA_CAP_N;             // ~2.618  rad (biegun S)
+let THETA_BLEND  = BLEND_RAD;                         // blend zone width
 
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -713,24 +716,49 @@ const POLAR_TILES = {
 
 // Apply grid.json values if available — runs synchronously via XMLHttpRequest
 // so VIEWS is fully populated before any other code references it.
+// For NEAR: if subtile_size < tile_out, cols/rows are multiplied by the split
+// factor so nearManager works on the sub-tile grid directly.
 (function applyGridJson() {
   try {
     const xhr = new XMLHttpRequest();
-    xhr.open('GET', 'tiles/grid.json', false);   // synchronous
+    xhr.open('GET', 'grid.json', false);   // synchronous
     xhr.send();
     if (xhr.status === 200) {
       const grid = JSON.parse(xhr.responseText);
+      const tileOut   = grid.tile_out    || 1024;
+      const subtile   = grid.subtile_size || tileOut;
+      const split     = Math.round(tileOut / subtile);  // e.g. 4 for 1024→256
+
+      // Sync polar cap boundary with gen_tiles.py / gen_polar_tiles.py
+      if (grid.polar_lat_cap != null) {
+        LAT_CAP_DEG = grid.polar_lat_cap;
+        LAT_CAP_RAD = THREE.MathUtils.degToRad(LAT_CAP_DEG);
+        THETA_CAP_N = Math.PI / 2 - LAT_CAP_RAD;
+        THETA_CAP_S = Math.PI - THETA_CAP_N;
+      }
+
       ['far', 'near'].forEach(v => {
         const g = grid.views && grid.views[v];
         if (!g) return;
-        VIEWS[v].cols = g.cols;
-        VIEWS[v].rows = g.rows;
-        VIEWS[v].seg  = g.seg || VIEWS[v].seg;
-        const dw = (360 / g.cols).toFixed(0);
-        const dh = (180 / g.rows).toFixed(0);
+        let cols = g.cols;
+        let rows = g.rows;
+        // NEAR: expand grid by split factor to match sub-tile filenames
+        if (v === 'near' && split > 1) {
+          cols = cols * split;
+          rows = rows * split;
+        }
+        VIEWS[v].cols     = cols;
+        VIEWS[v].rows     = rows;
+        VIEWS[v].seg      = g.seg || VIEWS[v].seg;
+        VIEWS[v].tileSize = (v === 'near') ? subtile : tileOut;
+        const dw = (360 / cols).toFixed(2);
+        const dh = (180 / rows).toFixed(2);
         if (v === 'near') VIEWS[v].label = `🔍 Detailed view · ${dw}°×${dh}°`;
       });
-      console.log(`[grid.json] far=${VIEWS.far.cols}×${VIEWS.far.rows}  near=${VIEWS.near.cols}×${VIEWS.near.rows}`);
+      console.log(`[grid.json] far=${VIEWS.far.cols}×${VIEWS.far.rows}  `
+                + `near=${VIEWS.near.cols}×${VIEWS.near.rows}  `
+                + `subtile=${subtile}px (split=${split}×${split})`
+                + (grid.polar_lat_cap != null ? `  polar_lat_cap=${grid.polar_lat_cap}°` : ''));
     }
   } catch(e) {
     console.warn('[grid.json] Not loaded — using fallback VIEWS', e);
@@ -892,87 +920,248 @@ function loadPolarCaps() {
 // Stores list of callbacks waiting for a view to finish loading (in-flight)
 const loadingCallbacks = {}; // name → [{isCancelled, onDone}] (unchanged)
 
+// ── loadView: used for FAR only ──────────────────────────────────────────────
+// NEAR uses nearManager (on-demand, frustum-culled, memory-safe).
 function loadView(name, isCancelled, onDone) {
   if (groupCache[name]) {
-    console.log(`[loadView] ${name}: FROM CACHE, calling onDone`);
     setTimeout(() => onDone(groupCache[name]), 0);
     return;
   }
-
   if (loadingCallbacks[name]) {
-    console.log(`[loadView] ${name}: already in-flight, queuing callback`);
     loadingCallbacks[name].push({ isCancelled, onDone });
     return;
   }
-
   loadingCallbacks[name] = [{ isCancelled, onDone }];
 
   const cfg    = VIEWS[name];
   const group  = new THREE.Group();
   const needed = cfg.cols * cfg.rows;
-  let   total  = 0;
+  let completed = 0;
+  let inFlight  = 0;
+  const queue   = [];
 
-  console.log(`[loadView] ${name}: START loading ${needed} tiles`);
+  for (let row = 0; row < cfg.rows; row++)
+    for (let col = 0; col < cfg.cols; col++)
+      queue.push({ row, col });
 
-  function checkDone() {
-    loader.tick(); // every tile (FAR or NEAR) counts toward the progress bar
-    total++;
-    if (total === needed) {
-      const callbacks = loadingCallbacks[name] || [];
-      delete loadingCallbacks[name];
+  let queueIdx = 0;
 
-      const active = callbacks.filter(cb => !cb.isCancelled());
-      if (active.length === 0) {
-        console.log(`[loadView] ${name}: ALL DONE but all callbacks CANCELLED, discarding`);
-        return;
+  function finish() {
+    const callbacks = loadingCallbacks[name] || [];
+    delete loadingCallbacks[name];
+    const active = callbacks.filter(cb => !cb.isCancelled());
+    if (active.length === 0) return;
+    groupCache[name] = group;
+    active.forEach(cb => cb.onDone(group));
+  }
+
+  function loadOne({ row, col }) {
+    const src = `${cfg.dir}/${row}_${col}.webp`;
+    loadTexture(src,
+      () => makeTileFallback(col, row, cfg.cols, cfg.rows, cfg.diagColor),
+      (tex) => {
+        loader.tick();
+        inFlight--;
+        completed++;
+        const segW = Math.max(8, Math.round(cfg.seg / cfg.cols));
+        const segH = Math.max(8, Math.round(cfg.seg / cfg.rows));
+        const geo  = buildTileGeo(col, row, cfg.cols, cfg.rows, segW, segH);
+        if (geo.index && geo.index.count > 0) {
+          const mat = new THREE.MeshBasicMaterial({
+            map: tex, side: THREE.FrontSide,
+            polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+          });
+          const mesh = new THREE.Mesh(geo, mat);
+          mesh.userData.tileFile = src;
+          group.add(mesh);
+        }
+        pump();
+        if (completed === needed) finish();
       }
-      console.log(`[loadView] ${name}: ALL DONE, meshes=${group.children.length}, notifying ${active.length} callback(s)`);
-      groupCache[name] = group;
-      active.forEach(cb => cb.onDone(group));
+    );
+  }
+
+  function pump() {
+    while (inFlight < 32 && queueIdx < queue.length) {
+      inFlight++;
+      loadOne(queue[queueIdx++]);
+    }
+  }
+  pump();
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// NEAR TILE MANAGER — on-demand, frustum-culled, memory-safe
+// ═══════════════════════════════════════════════════════════════════════
+// NOTE: nearManager is initialised lazily on first activation so that
+// VIEWS.near.cols/rows are already set by applyGridJson.
+let nearManager = null;
+
+function buildNearManager() {
+  const CONCURRENCY = 6;    // max parallel HTTP requests
+  const BUFFER_DEG  = 5.0;  // extra degrees loaded around visible cap (prefetch ring)
+
+  // Snapshot cfg after applyGridJson has run
+  const cols = VIEWS.near.cols;   // 288
+  const rows = VIEWS.near.rows;   // 144
+  const dir  = VIEWS.near.dir;
+
+  const group    = new THREE.Group();
+  const state    = {};   // key → 'loading'|'loaded'|'error'  (absent = idle)
+  const meshes   = {};
+  const textures = {};
+  const geos     = {};
+
+  let inFlight    = 0;
+  let loadQueue   = [];
+  let lastUpdateT = 0;
+  const UPDATE_MS = 150;
+
+  // Pre-compute tile centre lat/lon (degrees) for fast distance test
+  const tileLat = new Float32Array(rows);   // centre lat of each row
+  const tileLon = new Float32Array(cols);   // centre lon of each col
+  for (let r = 0; r < rows; r++)
+    tileLat[r] = 90 - (r + 0.5) * (180 / rows);
+  for (let c = 0; c < cols; c++)
+    tileLon[c] = -180 + (c + 0.5) * (360 / cols);
+
+  // Angular radius of the visible cap at NEAR zoom distance
+  // acos(1/dist) gives the half-angle of the visible hemisphere
+  const NEAR_DIST = 1.15;   // must match ZOOM_DIST[1]
+  // Angular radius of visible cap: acos(1/dist). FOV does NOT add to this —
+  // the horizon is the hard limit regardless of field of view.
+  const VIS_DEG = Math.acos(1 / NEAR_DIST) * 180 / Math.PI;  // ~29.6°
+  const LOAD_RADIUS_DEG = VIS_DEG + BUFFER_DEG;  // ~33.6°
+
+  function tileKey(r, c) { return `${r}_${c}`; }
+
+  function getGeo(row, col) {
+    const key = tileKey(row, col);
+    if (!geos[key]) geos[key] = buildTileGeo(col, row, cols, rows, 6, 6);
+    return geos[key];
+  }
+
+  // Globe centre lat/lon from globeGroup rotation
+  // rotation.x = -lat_rad,  rotation.y = -lon_rad (negated due to flipped phi)
+  // Initial rotation.y = PI/2 corresponds to lon=0°, so subtract that offset.
+  function centreLatLon() {
+    // rotation.x positive → globe tilts north → southern hemisphere faces camera
+    // so visible lat = +rotation.x (not negated), matching tile row ordering
+    const lat = THREE.MathUtils.radToDeg(globeGroup.rotation.x);
+    const lon = -THREE.MathUtils.radToDeg(globeGroup.rotation.y + Math.PI / 2);
+    return { lat, lon };
+  }
+
+  // Great-circle angular distance between two points (degrees)
+  function gcDist(lat1, lon1, lat2, lon2) {
+    const toRad = Math.PI / 180;
+    const φ1 = lat1 * toRad, φ2 = lat2 * toRad;
+    const Δλ = (lon2 - lon1) * toRad;
+    const sinφ = Math.sin(φ1) * Math.sin(φ2);
+    const cosφ = Math.cos(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+    return Math.acos(Math.max(-1, Math.min(1, sinφ + cosφ))) / toRad;
+  }
+
+  function evict(wantedSet) {
+    for (const key of Object.keys(meshes)) {
+      if (!wantedSet.has(key)) {
+        group.remove(meshes[key]);
+        meshes[key].material.dispose();
+        textures[key].dispose();
+        delete meshes[key];
+        delete textures[key];
+        delete state[key];
+      }
     }
   }
 
-  // ── Kafelki equirectangular ──
-  for (let row = 0; row < cfg.rows; row++) {
-    for (let col = 0; col < cfg.cols; col++) {
-      const key = `${row}_${col}`;
-      const src = cfg.tiles
-        ? cfg.tiles[key]
-        : `${cfg.dir}/${row}_${col}.webp`;
+  function pump() {
 
-      const r = row, c = col;
-      loadTexture(
-        src,
-        () => makeTileFallback(c, r, cfg.cols, cfg.rows, cfg.diagColor),
+    while (inFlight < CONCURRENCY && loadQueue.length > 0) {
+      const { row, col } = loadQueue.shift();
+      const key = tileKey(row, col);
+      if (state[key]) continue;
+      state[key] = 'loading';
+      inFlight++;
+      const src = `${dir}/${key}.webp`;
+      loadTexture(src,
+        () => makeTileFallback(col, row, cols, rows),
         (tex) => {
-          // Discard tile if all pending callbacks are already cancelled
-          const pendingCbs = loadingCallbacks[name] || [];
-          const anyActive  = pendingCbs.some(cb => !cb.isCancelled());
-          if (!anyActive) {
-            console.warn(`[tile ${name} ${r}_${c}] all callbacks CANCELLED, skipping`);
-            checkDone();
-            return;
-          }
-          const segW = Math.max(8, Math.round(cfg.seg / cfg.cols));
-          const segH = Math.max(8, Math.round(cfg.seg / cfg.rows));
-          const geo  = buildTileGeo(c, r, cfg.cols, cfg.rows, segW, segH);
+          inFlight--;
+          if (state[key] !== 'loading') { tex.dispose(); pump(); return; }
+          const geo = getGeo(row, col);
           if (geo.index && geo.index.count > 0) {
             const mat = new THREE.MeshBasicMaterial({
-              map: tex,
-              side: THREE.FrontSide,
-              polygonOffset: true,
-              polygonOffsetFactor: 1,
-              polygonOffsetUnits: 1,
+              map: tex, side: THREE.FrontSide,
+              polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
             });
             const mesh = new THREE.Mesh(geo, mat);
-            mesh.userData.tileFile = src; // dla trybu debug
+            mesh.userData.tileFile = src;
+            textures[key] = tex;
+            meshes[key]   = mesh;
+            state[key]    = 'loaded';
             group.add(mesh);
+          } else {
+            console.warn('[near] empty geo for', key, 'index:', geo.index ? geo.index.count : 'null');
+            state[key] = 'error';
           }
-          checkDone();
+          pump();
         }
       );
     }
   }
+
+  function update(now) {
+    if (now - lastUpdateT < UPDATE_MS) { pump(); return; }
+    lastUpdateT = now;
+
+    const { lat: cLat, lon: cLon } = centreLatLon();
+    const visRadius  = LOAD_RADIUS_DEG;
+    const buffRadius = visRadius;  // buffer already included in LOAD_RADIUS_DEG
+
+    // Find all tiles within angular radius — build wanted set
+    const wanted  = new Set();
+    const visible = [];   // tiles closest to centre (load first)
+
+    for (let r = 0; r < rows; r++) {
+      const latR = tileLat[r];
+      // Quick lat pre-filter: skip rows clearly out of range
+      if (Math.abs(latR - cLat) > visRadius + 5) continue;
+
+      for (let c = 0; c < cols; c++) {
+        // Skip tiles hidden under polar caps
+        if (Math.abs(latR) >= LAT_CAP_DEG) continue;
+        const dist = gcDist(cLat, cLon, latR, tileLon[c]);
+        if (dist <= visRadius) {
+          const key = tileKey(r, c);
+          wanted.add(key);
+          if (!state[key]) visible.push({ row: r, col: c, dist });
+        }
+      }
+    }
+
+    evict(wanted);
+
+    // Sort by distance from centre — closest tiles load first
+    visible.sort((a, b) => a.dist - b.dist);
+    loadQueue = visible;
+    pump();
+  }
+
+  function reset() {
+    for (const key of Object.keys(meshes)) {
+      group.remove(meshes[key]);
+      meshes[key].material.dispose();
+      textures[key].dispose();
+    }
+    Object.keys(meshes).forEach(k => delete meshes[k]);
+    Object.keys(textures).forEach(k => delete textures[k]);
+    Object.keys(state).forEach(k => delete state[k]);
+    loadQueue = [];
+  }
+
+  return { group, update, reset };
 }
 
 
@@ -994,14 +1183,14 @@ const loader = (() => {
   const elPhase = document.getElementById('load-phase');
   const elWrap  = document.getElementById('loading');
 
-  const FAR_COUNT  = VIEWS.far.cols  * VIEWS.far.rows;   // 32
-  const NEAR_COUNT = VIEWS.near.cols * VIEWS.near.rows;  // from grid.json
-  const TOTAL      = FAR_COUNT + NEAR_COUNT + 2;         // + 2 polar caps
+  // NEAR tiles are loaded on-demand — only FAR (32) + polar caps (2) tracked here
+  const FAR_COUNT = VIEWS.far.cols * VIEWS.far.rows;  // 32
+  const TOTAL     = FAR_COUNT + 2;                    // + 2 polar caps
 
   let done       = 0;
   let farInScene = false;
   let dismissed  = false;
-  const startTime = Date.now();
+  const startTime      = Date.now();
   const MIN_DISPLAY_MS = 3000;
 
   function refresh() {
@@ -1009,18 +1198,15 @@ const loader = (() => {
     const pct = Math.min(100, Math.round((done / TOTAL) * 100));
     elBar.style.width   = pct + '%';
     elCount.textContent = `${done} / ${TOTAL}`;
-
     if (done < FAR_COUNT)
       elPhase.textContent = 'Loading overview…';
-    else if (done < FAR_COUNT + 2)
+    else
       elPhase.textContent = 'Loading polar caps…';
-    else if (done < TOTAL)
-      elPhase.textContent = 'Loading detail view…';
   }
 
   function tryDismiss() {
     if (dismissed) return;
-    if (farInScene && done >= FAR_COUNT + 2) {
+    if (farInScene && done >= TOTAL) {
       dismissed = true;
       elPhase.textContent = 'Ready';
       elBar.style.width = '100%';
@@ -1048,35 +1234,38 @@ const loader = (() => {
 
 function setView(name) {
   if (name === activeName) return;
-
   activeName = name;
 
-  const mySeq = ++loadSeq;
-  console.log(`[setView] ${name} seq=${mySeq}`);
+  // Remove previous tile group — keep polar caps and starfield
+  const toRemove = globeGroup.children.filter(c => c !== polarGroup && !c.isStarfield);
+  toRemove.forEach(c => globeGroup.remove(c));
+  activeGroup = null;
 
-  const isCancelled = () => mySeq !== loadSeq;
-
-  loadView(name, isCancelled, (group) => {
-    console.log(`[setView cb] ${name} seq=${mySeq} → ${isCancelled() ? 'IGNORED' : 'APPLIED'}`);
-    if (isCancelled()) return;
-    const toRemove = globeGroup.children.filter(c => c !== polarGroup && !c.isStarfield);
-    toRemove.forEach(c => globeGroup.remove(c));
-    globeGroup.remove(group);
-    activeGroup = group;
-    globeGroup.add(group);
-
-    // FAR loaded and in scene — signal to loader
-    if (name === 'far') {
-      loader.farReady();
-      // Silently pre-fetch NEAR in background (does not block loader)
-      if (!groupCache['near'] && !loadingCallbacks['near']) {
-        const noop = () => false; // never cancelled — pre-fetch always completes
-        loadView('near', noop, () => {
-          console.log('[prefetch] near: done');
-        });
-      }
+  if (name === 'near') {
+    // Lazy-init nearManager after applyGridJson has set VIEWS.near.cols/rows
+    if (!nearManager) nearManager = buildNearManager();
+    globeGroup.add(nearManager.group);
+    activeGroup = nearManager.group;
+  } else {
+    // Switching away from NEAR — evict all tiles to free memory
+    if (nearManager) {
+      nearManager.reset();
+      globeGroup.remove(nearManager.group);
     }
-  });
+
+    const mySeq = ++loadSeq;
+    const isCancelled = () => mySeq !== loadSeq;
+
+    loadView(name, isCancelled, (group) => {
+      if (isCancelled()) return;
+      const toRemove2 = globeGroup.children.filter(c => c !== polarGroup && !c.isStarfield);
+      toRemove2.forEach(c => globeGroup.remove(c));
+      globeGroup.remove(group);
+      activeGroup = group;
+      globeGroup.add(group);
+      if (name === 'far') loader.farReady();
+    });
+  }
 }
 
 
@@ -1121,6 +1310,35 @@ let   dbgLastMesh  = null;
 
 const DBG_TINT = new THREE.Color(0xff6633); // tint color (orange-red)
 
+// ── Subtile reverse map — loaded from tiles/near/subtile_map.txt ──────
+// Maps "row_col.webp" → "src_row_src_col.png" for the NEAR view.
+// Built once on first debug hover, stays empty if file is absent.
+const dbgSubtileMap = {};   // e.g. { "24_3.webp": "6_0.png", … }
+let   dbgSubtileMapLoaded = false;
+
+function dbgLoadSubtileMap() {
+  if (dbgSubtileMapLoaded) return;
+  dbgSubtileMapLoaded = true;
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', `${VIEWS.near.dir}/subtile_map.txt`, false); // synchronous
+    xhr.send();
+    if (xhr.status !== 200) return;
+    // Parse only the REVERSE LOOKUP section
+    let inReverse = false;
+    for (const line of xhr.responseText.split('\n')) {
+      if (line.startsWith('REVERSE LOOKUP')) { inReverse = true; continue; }
+      if (!inReverse) continue;
+      // Format:  "  24_3.webp           ←  6_0.png"
+      const m = line.match(/^\s+(\S+\.webp)\s+←\s+(\S+\.png)/);
+      if (m) dbgSubtileMap[m[1]] = m[2];
+    }
+    console.log(`[debug] subtile_map.txt loaded — ${Object.keys(dbgSubtileMap).length} entries`);
+  } catch(e) {
+    console.warn('[debug] subtile_map.txt not available:', e);
+  }
+}
+
 function dbgGetTileMeshes() {
   if (!activeGroup) return [];
   return activeGroup.children.filter(m => m.userData.tileFile);
@@ -1158,8 +1376,13 @@ function dbgUpdate(mouseEvent) {
     dbgLastMesh = mesh;
   }
 
-  // Tooltip with full file path
-  dbgTooltip.textContent = mesh.userData.tileFile;
+  // Tooltip: "tiles/near/27_3.webp  (← 6_0.png)"
+  const tileFile = mesh.userData.tileFile;
+  const fileName = tileFile.split('/').pop();         // "27_3.webp"
+  const srcPng   = dbgSubtileMap[fileName];           // "6_0.png" or undefined
+  dbgTooltip.textContent = srcPng
+    ? `${tileFile}  (← ${srcPng})`
+    : tileFile;
   dbgTooltip.style.display = 'block';
   const tx = Math.min(mouseEvent.clientX + 14, window.innerWidth  - dbgTooltip.offsetWidth  - 8);
   const ty = Math.max(mouseEvent.clientY - 32, 8);
@@ -1174,6 +1397,8 @@ if (DEBUG) {
     dbgTooltip.style.display = 'none';
     dbgClearTint();
   });
+  // Pre-load subtile map so it's ready before the first hover
+  dbgLoadSubtileMap();
   console.info('%c[DEBUG MODE ON]', 'color:#ff4444;font-weight:bold');
 }
 
@@ -1235,7 +1460,8 @@ function refreshCoords() {
 
   // Lon: NEGATE rotation.y — geometry has flipped phi axis (phiStart = PI-...),
   // so raw rotation.y is mirrored. Negation compensates for this.
-  const lon = -THREE.MathUtils.radToDeg(globeGroup.rotation.y);
+  // Subtract initial PI/2 offset (lon=0° faces camera at startup).
+  const lon = -THREE.MathUtils.radToDeg(globeGroup.rotation.y + Math.PI / 2);
 
   document.getElementById('coords').textContent =
     `Centrum: ${fmtLat(lat)}  ${fmtLon(lon)}`;
@@ -1262,6 +1488,9 @@ function animate() {
 
   // Smooth camera lerp toward target distance
   camera.position.z += (targetDist - camera.position.z) * 0.09;
+
+  // Update NEAR tile manager when active (throttled internally)
+  if (nearManager && activeName === 'near') nearManager.update(performance.now());
 
   renderer.render(scene, camera);
 }

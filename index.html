@@ -1310,6 +1310,35 @@ let   dbgLastMesh  = null;
 
 const DBG_TINT = new THREE.Color(0xff6633); // tint color (orange-red)
 
+// ── Subtile reverse map — loaded from tiles/near/subtile_map.txt ──────
+// Maps "row_col.webp" → "src_row_src_col.png" for the NEAR view.
+// Built once on first debug hover, stays empty if file is absent.
+const dbgSubtileMap = {};   // e.g. { "24_3.webp": "6_0.png", … }
+let   dbgSubtileMapLoaded = false;
+
+function dbgLoadSubtileMap() {
+  if (dbgSubtileMapLoaded) return;
+  dbgSubtileMapLoaded = true;
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', `${VIEWS.near.dir}/subtile_map.txt`, false); // synchronous
+    xhr.send();
+    if (xhr.status !== 200) return;
+    // Parse only the REVERSE LOOKUP section
+    let inReverse = false;
+    for (const line of xhr.responseText.split('\n')) {
+      if (line.startsWith('REVERSE LOOKUP')) { inReverse = true; continue; }
+      if (!inReverse) continue;
+      // Format:  "  24_3.webp           ←  6_0.png"
+      const m = line.match(/^\s+(\S+\.webp)\s+←\s+(\S+\.png)/);
+      if (m) dbgSubtileMap[m[1]] = m[2];
+    }
+    console.log(`[debug] subtile_map.txt loaded — ${Object.keys(dbgSubtileMap).length} entries`);
+  } catch(e) {
+    console.warn('[debug] subtile_map.txt not available:', e);
+  }
+}
+
 function dbgGetTileMeshes() {
   if (!activeGroup) return [];
   return activeGroup.children.filter(m => m.userData.tileFile);
@@ -1347,8 +1376,13 @@ function dbgUpdate(mouseEvent) {
     dbgLastMesh = mesh;
   }
 
-  // Tooltip with full file path
-  dbgTooltip.textContent = mesh.userData.tileFile;
+  // Tooltip: "tiles/near/27_3.webp  (← 6_0.png)"
+  const tileFile = mesh.userData.tileFile;
+  const fileName = tileFile.split('/').pop();         // "27_3.webp"
+  const srcPng   = dbgSubtileMap[fileName];           // "6_0.png" or undefined
+  dbgTooltip.textContent = srcPng
+    ? `${tileFile}  (← ${srcPng})`
+    : tileFile;
   dbgTooltip.style.display = 'block';
   const tx = Math.min(mouseEvent.clientX + 14, window.innerWidth  - dbgTooltip.offsetWidth  - 8);
   const ty = Math.max(mouseEvent.clientY - 32, 8);
@@ -1363,6 +1397,8 @@ if (DEBUG) {
     dbgTooltip.style.display = 'none';
     dbgClearTint();
   });
+  // Pre-load subtile map so it's ready before the first hover
+  dbgLoadSubtileMap();
   console.info('%c[DEBUG MODE ON]', 'color:#ff4444;font-weight:bold');
 }
 

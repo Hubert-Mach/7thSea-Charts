@@ -125,6 +125,7 @@ def process_tile(src, dst_dir, tile_out, subtile_size, row_corrections,
     total_webp   = 0
     total_png    = 0
     sub_count    = 0
+    subtiles     = []   # list of (out_row, out_col) produced by this source tile
 
     for sr in range(split):
         for sc in range(split):
@@ -146,6 +147,7 @@ def process_tile(src, dst_dir, tile_out, subtile_size, row_corrections,
                          compress_level=png_compress, optimize=True)
                 total_png += png_path.stat().st_size
 
+            subtiles.append((out_row, out_col))
             sub_count += 1
 
     return {
@@ -153,6 +155,9 @@ def process_tile(src, dst_dir, tile_out, subtile_size, row_corrections,
         'total_webp': total_webp,
         'total_png':  total_png,
         'sub_count':  sub_count,
+        'subtiles':   subtiles,   # [(out_row, out_col), …]
+        'src_row':    row,
+        'src_col':    col,
     }
 
 
@@ -193,6 +198,7 @@ def run(args):
     print()
 
     grand_orig = grand_webp = grand_png = 0
+    mapping = []   # list of result dicts, one per source tile
 
     for i, png in enumerate(png_files):
         s = process_tile(png, dst_dir, tile_out, subtile_size, row_corrections,
@@ -200,6 +206,7 @@ def run(args):
         grand_orig += s['original']
         grand_webp += s['total_webp']
         grand_png  += s['total_png']
+        mapping.append(s)
 
         pct = (i + 1) * 100 // len(png_files)
         bar = '#' * (pct // 5) + '.' * (20 - pct // 5)
@@ -216,6 +223,75 @@ def run(args):
         print(f"   PNG out : {format_size(grand_png)}  "
               f"({(1-grand_png/grand_orig)*100:+.1f}%)")
     print()
+
+    # Write subtile_map.txt only when splitting actually occurs
+    if split > 1:
+        write_subtile_map(mapping, split, subtile_size, tile_out, dst_dir)
+
+
+def write_subtile_map(mapping, split, subtile_size, tile_out, dst_dir):
+    """
+    Writes subtile_map.txt — maps each source PNG tile to the WebP sub-tiles
+    it was cut into.  Useful in debug mode: when you see e.g. '17_23.webp'
+    in the tooltip you can look up which source PNG to edit.
+
+    Format (no-split case is skipped — file is not written):
+
+      SOURCE TILE → SUB-TILES  (split 4×4, 1024px → 256px)
+      =====================================================
+      6_0.png  →  24_0  24_1  24_2  24_3
+                  25_0  25_1  25_2  25_3
+                  26_0  26_1  26_2  26_3
+                  27_0  27_1  27_2  27_3
+      ...
+
+    Also writes a reverse lookup section for quick search by sub-tile name.
+    """
+    lines = []
+    lines.append(f"subtile_map.txt — source PNG → WebP sub-tile mapping")
+    lines.append(f"Split: {split}×{split}  ({tile_out}px → {subtile_size}px per sub-tile)")
+    lines.append("=" * 54)
+    lines.append("")
+
+    # ── Forward: source → sub-tiles ──
+    lines.append("SOURCE PNG  →  SUB-TILES (row_col.webp)")
+    lines.append("-" * 54)
+
+    # Sort by source row then col
+    for s in sorted(mapping, key=lambda x: (x['src_row'], x['src_col'])):
+        src_name  = f"{s['src_row']}_{s['src_col']}.png"
+        subtiles  = s['subtiles']   # list of (out_row, out_col) in raster order
+
+        # Format sub-tiles in a split×split grid for readability
+        label_w = max(len(f"{r}_{c}") for r, c in subtiles)
+        prefix  = f"  {src_name:<12}  →  "
+        indent  = " " * len(prefix)
+
+        for sr in range(split):
+            row_tiles = [f"{r}_{c}".ljust(label_w)
+                         for r, c in subtiles[sr * split:(sr + 1) * split]]
+            row_str   = "  ".join(row_tiles)
+            lines.append(f"{prefix if sr == 0 else indent}{row_str}")
+
+        lines.append("")
+
+    # ── Reverse: sub-tile → source ──
+    lines.append("")
+    lines.append("REVERSE LOOKUP  (sub-tile → source PNG)")
+    lines.append("-" * 54)
+
+    reverse = {}
+    for s in mapping:
+        src_name = f"{s['src_row']}_{s['src_col']}.png"
+        for out_row, out_col in s['subtiles']:
+            reverse[f"{out_row}_{out_col}"] = src_name
+
+    for key in sorted(reverse, key=lambda k: tuple(int(x) for x in k.split('_'))):
+        lines.append(f"  {key+'.webp':<18}  ←  {reverse[key]}")
+
+    out_path = dst_dir / "subtile_map.txt"
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"   subtile_map.txt → {out_path}")
 
 
 def main():
