@@ -160,6 +160,73 @@ def gen_view(norm_img, view_name, view_cfg, tile_out, max_correction, out_dir,
     print(f"\r  [{view_name}] Done — {generated}/{total} tiles generated → {tile_out_dir}/          ")
 
 
+def write_tile_sizes(grid, out_dir, norm_w, norm_h):
+    """
+    Writes tile_sizes.txt — a helper for creating maps in Wonderdraft before tile import.
+
+    For each view and each row lists the exact PNG tile size in pixels
+    (width × height), accounting for lat-stretch correction.
+    NEAR tiles have varying heights depending on latitude — the file groups
+    consecutive rows with the same size and shows their lat range.
+    """
+    tile_out    = grid['tile_out']
+    max_corr    = grid['max_correction']
+    polar_cap   = grid.get('polar_lat_cap')
+    lines       = []
+
+    lines.append("tile_sizes.txt — PNG tile sizes for Wonderdraft")
+    lines.append("=" * 54)
+    lines.append(f"Source map:     {norm_w} × {norm_h} px")
+    lines.append(f"tile_out:       {tile_out} px")
+    if polar_cap:
+        lines.append(f"Polar cap:      ±{polar_cap}° (tiles beyond this range are not generated)")
+    lines.append("")
+
+    for view_name, view_cfg in grid['views'].items():
+        cols        = view_cfg['cols']
+        rows        = view_cfg['rows']
+        lat_stretch = view_cfg['lat_stretch']
+        deg_lon     = 360.0 / cols
+        deg_lat     = 180.0 / rows
+
+        lines.append(f"[{view_name.upper()}]  {cols} × {rows} tiles  ({deg_lon:.2f}° × {deg_lat:.2f}° per tile)")
+        lines.append("-" * 54)
+
+        if not lat_stretch:
+            lines.append(f"  Every tile:  {tile_out} × {tile_out} px")
+        else:
+            groups = []
+            for row in range(rows):
+                if polar_cap and not polar_row_visible(row, rows, polar_cap):
+                    continue
+                correction = lat_correction(row, rows, max_corr)
+                out_h      = round(tile_out * correction)
+                lat_top    = 90.0 - row * deg_lat
+                lat_bot    = 90.0 - (row + 1) * deg_lat
+                if groups and groups[-1][1] == out_h:
+                    prev = groups[-1]
+                    groups[-1] = (prev[0], prev[1], prev[2], row, prev[4], lat_bot)
+                else:
+                    groups.append((tile_out, out_h, row, row, lat_top, lat_bot))
+
+            lines.append(f"  Width of every tile:  {tile_out} px (constant)")
+            lines.append(f"  Height varies with latitude (lat-stretch):")
+            lines.append("")
+            lines.append(f"  {'Rows':>12}  {'Lat range':>16}  {'Size (px)':>14}")
+            lines.append(f"  {'-'*12}  {'-'*16}  {'-'*14}")
+            for (out_w, out_h, r0, r1, lat_top, lat_bot) in groups:
+                row_range = f"{r0}" if r0 == r1 else f"{r0}–{r1}"
+                lat_range = f"{lat_top:+.0f}° → {lat_bot:+.0f}°"
+                size_str  = f"{out_w} × {out_h}"
+                lines.append(f"  {row_range:>12}  {lat_range:>16}  {size_str:>14}")
+
+        lines.append("")
+
+    out_path = Path(out_dir) / "tile_sizes.txt"
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    print(f"  tile_sizes.txt → {out_path}")
+
+
 def gen_tiles(src_path, grid_path, view='all', out_dir=DEFAULT_OUT_DIR):
     src_path = Path(src_path)
     if not src_path.exists():
@@ -194,6 +261,7 @@ def gen_tiles(src_path, grid_path, view='all', out_dir=DEFAULT_OUT_DIR):
         gen_view(norm_img, view_name, view_cfg, tile_out, max_corr, out_dir,
                  polar_lat_cap=polar_cap)
 
+    write_tile_sizes(grid, out_dir, norm_w, norm_h)
     print("\nDone!")
 
 

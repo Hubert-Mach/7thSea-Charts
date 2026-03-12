@@ -157,21 +157,36 @@ def process_tile(src, dst_dir, tile_out, subtile_size, row_corrections,
 
 
 def run(args):
-    src_dir = Path(args.input_dir)
+    # ── Resolve source files and directory ──────────────────────────────
+    # Two modes:
+    #   directory mode (default): compress all PNGs in input_dir
+    #   file mode (--files):      compress only the listed PNG files
+    if args.files:
+        png_files = [Path(f) for f in args.files]
+        missing   = [f for f in png_files if not f.exists()]
+        if missing:
+            for f in missing:
+                print(f"❌  File not found: {f}")
+            sys.exit(1)
+        # Infer src_dir from the first file (for load_grid view detection)
+        src_dir = png_files[0].parent
+    else:
+        src_dir   = Path(args.input_dir)
+        png_files = sorted(src_dir.glob('*.png'))
+        if not png_files:
+            print(f"❌  No PNG files in: {src_dir}")
+            sys.exit(1)
+
     dst_dir = Path(args.out) if args.out else src_dir.parent / (src_dir.name + '_compressed')
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     tile_out, row_corrections, subtile_size, skipped_rows = load_grid(src_dir)
     split = tile_out // subtile_size
 
-    png_files = sorted(src_dir.glob('*.png'))
-    if not png_files:
-        print(f"❌  No PNG files in: {src_dir}")
-        sys.exit(1)
-
     out_count = len(png_files) * split * split
+    mode_label = f"--files ({len(png_files)} selected)" if args.files else str(src_dir)
     print(f"\n🗜  Compressing {len(png_files)} source tiles → {out_count} output tiles")
-    print(f"   Source : {src_dir}")
+    print(f"   Source : {mode_label}")
     print(f"   Output : {dst_dir}")
     print(f"   WebP quality: {args.webp_quality}  |  Split: {split}×{split}"
           f"  ({tile_out}px → {subtile_size}px)")
@@ -209,6 +224,9 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument('input_dir', nargs='?', default='.',
         help='Directory with PNG tiles (grid.json must be next to this script)')
+    ap.add_argument('--files', nargs='+', metavar='FILE',
+        help='Compress specific PNG files instead of a whole directory. '
+             'grid.json is resolved from the directory containing the first file.')
     ap.add_argument('--out', metavar='DIR',
         help='Output directory (default: <input_dir>_compressed)')
     ap.add_argument('--webp-quality', type=int, default=DEFAULT_WEBP_QUALITY,
