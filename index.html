@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!--
-  globe.html — Interactive 3D globe for 7th Sea / Mappa Mundi
+  globe.html — Interactive 3D globe for 7th Sea 
   ============================================================
 
   ARCHITECTURE
@@ -82,7 +82,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>7th Sea — Mappa Mundi</title>
+<title>7th Sea — Terra</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Cinzel+Decorative:wght@700&display=swap" rel="stylesheet">
 <style>
 /* ── CSS Variables ── */
@@ -139,6 +139,36 @@ canvas#c:active{cursor:grabbing;}
   background:var(--panel);border:1px solid var(--border);border-radius:4px;
   padding:3px 11px;font-size:.63rem;letter-spacing:.1em;pointer-events:none;
 }
+
+/* ── Language selector (top right) ── */
+#lang-wrap{
+  position:absolute;top:12px;right:16px;z-index:8;
+}
+#lang-btn{
+  background:var(--panel);border:1px solid var(--border);border-radius:20px;
+  padding:4px 14px;font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--txt);font-family:'Cinzel',serif;
+  cursor:pointer;backdrop-filter:blur(6px);white-space:nowrap;
+  display:flex;align-items:center;gap:8px;
+}
+#lang-btn:hover{ border-color:var(--gold-d);color:var(--gold); }
+#lang-btn::after{ content:'▾';font-size:.6rem;opacity:.7; }
+#lang-dropdown{
+  display:none;
+  position:absolute;top:calc(100% + 6px);right:0;
+  background:var(--panel);border:1px solid var(--border);border-radius:8px;
+  overflow:hidden;backdrop-filter:blur(8px);
+  min-width:140px;
+}
+#lang-wrap.open #lang-dropdown{ display:block; }
+.lang-option{
+  display:block;width:100%;text-align:left;
+  padding:7px 16px;font-size:.65rem;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--txt);font-family:'Cinzel',serif;background:none;border:none;
+  cursor:pointer;white-space:nowrap;
+}
+.lang-option:hover{ background:rgba(232,184,48,.12);color:var(--gold); }
+.lang-option.active{ color:var(--gold);font-weight:600; }
 
 /* ── Debug mode ── */
 #dbg-tooltip{
@@ -221,6 +251,12 @@ canvas#c:active{cursor:grabbing;}
   <div id="coords" style="position:absolute;bottom:12px;left:50%;transform:translateX(-50%);
     color:rgba(255,255,255,0.7);font:13px/1 monospace;pointer-events:none;
     text-shadow:0 1px 3px #000;letter-spacing:.04em;"></div>
+
+  <!-- Language selector — top right -->
+  <div id="lang-wrap">
+    <button id="lang-btn" aria-haspopup="listbox">Théah</button>
+    <div id="lang-dropdown" role="listbox"></div>
+  </div>
 
   <!-- Loading screen — disappears after all tiles and polar caps are loaded -->
   <div id="loading">
@@ -716,6 +752,99 @@ const VIEWS = {
   },
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// LANGUAGE SYSTEM
+// ═══════════════════════════════════════════════════════════════════════
+//
+// Each language entry:
+//   id    — subdirectory name under tiles/  (e.g. "avalon" → tiles/avalon/near/)
+//           If a tile is missing, falls back to tiles/near/ automatically.
+//   label — display name in the UI
+//
+// To add a new language: append an entry to LANGUAGES. That's it.
+// ═══════════════════════════════════════════════════════════════════════
+const LANGUAGES = [
+  { id: 'avalon',   label: 'Avalon'   },
+  { id: 'sarmatia', label: 'Sarmatia' },
+];
+
+let activeLang = LANGUAGES[0];   // currently selected language (default: first in list)
+
+// Apply a language: update VIEWS dirs, flush caches, reload current view.
+function setLang(lang) {
+  if (lang.id === activeLang.id) return;
+  activeLang = lang;
+
+  VIEWS.near.dir = `tiles/${lang.id}/near`;
+  VIEWS.far.dir  = `tiles/${lang.id}/far`;
+
+  console.log(`[lang] "${lang.label}"  near→${VIEWS.near.dir}  far→${VIEWS.far.dir}`);
+
+  // Swap legend image — falls back to legend.png if lang-specific one missing
+  const legendEl = document.getElementById('legend');
+  if (legendEl) {
+    const langSrc = `${lang.id}_legend.png`;
+    const fallback = 'legend.png';
+    legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = fallback; legendEl.style.display = ''; };
+    legendEl.onload  = () => { legendEl.style.display = ''; };
+    legendEl.src = langSrc;
+  }
+
+  // Flush FAR cache so it reloads from the new dir
+  delete groupCache['far'];
+
+  // Rebuild nearManager so it snapshots the new dir
+  if (nearManager) {
+    nearManager.reset();
+    globeGroup.remove(nearManager.group);
+    nearManager = null;
+  }
+
+  // Force reload of the active view
+  const prev = activeName;
+  activeName = null;
+  setView(prev);
+
+  // Update UI
+  langUpdateUI();
+}
+
+// ── Language UI ──────────────────────────────────────────────────────
+const langWrap     = document.getElementById('lang-wrap');
+const langBtn      = document.getElementById('lang-btn');
+const langDropdown = document.getElementById('lang-dropdown');
+
+function langUpdateUI() {
+  langBtn.childNodes[0].textContent = activeLang.label;
+  langDropdown.innerHTML = '';
+  LANGUAGES.forEach(lang => {
+    const isActive = lang.id === activeLang.id;
+    const btn = document.createElement('button');
+    btn.className = 'lang-option' + (isActive ? ' active' : '');
+    btn.textContent = lang.label;
+    btn.addEventListener('click', () => {
+      langWrap.classList.remove('open');
+      if (!isActive) setLang(lang);
+    });
+    langDropdown.appendChild(btn);
+  });
+}
+
+// Toggle dropdown open/close
+langBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const opening = !langWrap.classList.contains('open');
+  langWrap.classList.toggle('open');
+  if (opening) langUpdateUI();   // refresh availability on open
+});
+
+// Close on outside click
+document.addEventListener('click', () => langWrap.classList.remove('open'));
+langDropdown.addEventListener('click', e => e.stopPropagation());
+
+// Initial UI render
+langUpdateUI();
+
 // Polar tile paths (gnomonic projection)
 const POLAR_TILES = {
   north: 'tiles/polar_n.webp',
@@ -780,7 +909,10 @@ const groupCache = {};  // cache: name → THREE.Group (unchanged)
 const maxAniso   = renderer.capabilities.getMaxAnisotropy();
 
 // ── Helper: load texture from URL or use fallback canvas ──
-function loadTexture(src, fallbackFn, onDone) {
+// If fallbackSrc is provided and src fails to load, tries fallbackSrc first
+// before falling back to the canvas fallbackFn. Used for language tiles:
+// if tiles/avalon/near/X.webp is missing, loads tiles/near/X.webp instead.
+function loadTexture(src, fallbackFn, onDone, fallbackSrc) {
   const img = new Image();
   img.onload = () => {
     const tex = new THREE.Texture(img);
@@ -793,10 +925,15 @@ function loadTexture(src, fallbackFn, onDone) {
     onDone(tex);
   };
   img.onerror = () => {
-    const cv  = fallbackFn();
-    const tex = new THREE.CanvasTexture(cv);
-    tex.anisotropy = maxAniso;
-    onDone(tex);
+    if (fallbackSrc && fallbackSrc !== src) {
+      // Try the default-language tile before giving up
+      loadTexture(fallbackSrc, fallbackFn, onDone);
+    } else {
+      const cv  = fallbackFn();
+      const tex = new THREE.CanvasTexture(cv);
+      tex.anisotropy = maxAniso;
+      onDone(tex);
+    }
   };
   img.src = src;
 }
@@ -964,7 +1101,8 @@ function loadView(name, isCancelled, onDone) {
   }
 
   function loadOne({ row, col }) {
-    const src = `${cfg.dir}/${row}_${col}.webp`;
+    const src        = `${cfg.dir}/${row}_${col}.webp`;
+    const defaultSrc = `tiles/${name}/${row}_${col}.webp`;  // default-lang fallback
     loadTexture(src,
       () => makeTileFallback(col, row, cfg.cols, cfg.rows, cfg.diagColor),
       (tex) => {
@@ -985,7 +1123,8 @@ function loadView(name, isCancelled, onDone) {
         }
         pump();
         if (completed === needed) finish();
-      }
+      },
+      src !== defaultSrc ? defaultSrc : undefined
     );
   }
 
@@ -1088,11 +1227,12 @@ function buildNearManager() {
 
     while (inFlight < CONCURRENCY && loadQueue.length > 0) {
       const { row, col } = loadQueue.shift();
-      const key = tileKey(row, col);
+      const key        = tileKey(row, col);
       if (state[key]) continue;
       state[key] = 'loading';
       inFlight++;
-      const src = `${dir}/${key}.webp`;
+      const src        = `${dir}/${key}.webp`;
+      const defaultSrc = `tiles/near/${key}.webp`;   // default-lang fallback
       loadTexture(src,
         () => makeTileFallback(col, row, cols, rows),
         (tex) => {
@@ -1115,7 +1255,8 @@ function buildNearManager() {
             state[key] = 'error';
           }
           pump();
-        }
+        },
+        src !== defaultSrc ? defaultSrc : undefined
       );
     }
   }
@@ -1510,6 +1651,32 @@ function animate() {
 // START
 // ═══════════════════════════════════════════════════════════════════════
 loadPolarCaps();
+
+// Apply ?lang=avalon from URL if present and valid
+(function applyUrlLang() {
+  const id = new URLSearchParams(location.search).get('lang');
+  if (id) {
+    // URL param present — use specified language if valid, otherwise keep default
+    const match = LANGUAGES.find(l => l.id === id);
+    if (match) {
+      activeLang = match;
+      VIEWS.far.dir  = `tiles/${match.id}/far`;
+      VIEWS.near.dir = `tiles/${match.id}/near`;
+      langUpdateUI();
+      const legendEl = document.getElementById('legend');
+      if (legendEl) {
+        legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = 'legend.png'; legendEl.style.display = ''; };
+        legendEl.onload  = () => { legendEl.style.display = ''; };
+        legendEl.src = `${match.id}_legend.png`;
+      }
+    }
+  } else {
+    // No URL param — sync dirs to default language
+    VIEWS.far.dir  = `tiles/${activeLang.id}/far`;
+    VIEWS.near.dir = `tiles/${activeLang.id}/near`;
+  }
+})();
+
 setView('far');
 animate();
 </script>

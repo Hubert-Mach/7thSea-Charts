@@ -1,51 +1,9 @@
 {
-    "widman_settlement_167": {
-        "name": "Widman Settlement 167",
-        "radius": 23,
-        "offset_x": 0,
-        "offset_y": -7,
-        "draw_mode": "normal"
-    },
-    "widman_settlement_247": {
-        "name": "Widman Settlement 247",
-        "radius": 15,
-        "offset_x": 0,
-        "offset_y": -5,
-        "draw_mode": "normal"
-    },
-    "widman_settlement_11": {
-        "name": "Widman Settlement 11",
-        "radius": 17,
-        "offset_x": 0,
-        "offset_y": -4,
-        "draw_mode": "normal"
-    },
     "widman_settlement_170": {
         "name": "Widman Settlement 170",
         "radius": 16,
         "offset_x": 0,
         "offset_y": -2,
-        "draw_mode": "normal"
-    },
-    "widman_settlement_204": {
-        "name": "Widman Settlement 204",
-        "radius": 15,
-        "offset_x": 0,
-        "offset_y": -6,
-        "draw_mode": "normal"
-    },
-    "widman_settlement_125": {
-        "name": "Widman Settlement 125",
-        "radius": 17,
-        "offset_x": 0,
-        "offset_y": -6,
-        "draw_mode": "normal"
-    },
-    "widman_settlement_179": {
-        "name": "Widman Settlement 179",
-        "radius": 21,
-        "offset_x": 0,
-        "offset_y": -4,
         "draw_mode": "normal"
     },
     "widman_settlement_14": {
