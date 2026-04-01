@@ -15,6 +15,7 @@ jobs:
         run: |
           mkdir deploy
           cp index.html deploy/
+          cp grid.json deploy/
           cp -r tiles/ deploy/
 
       - name: Deploy to gh-pages
