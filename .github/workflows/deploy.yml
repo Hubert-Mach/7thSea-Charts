@@ -16,6 +16,8 @@ jobs:
           mkdir deploy
           cp index.html deploy/
           cp grid.json deploy/
+          cp legend.png deploy/
+          cp sarmatia_legend.png deploy/
           cp -r tiles/ deploy/
 
       - name: Deploy to gh-pages
