@@ -133,6 +133,16 @@ canvas#c:active{cursor:grabbing;}
   pointer-events:none;backdrop-filter:blur(6px);white-space:nowrap;
 }
 
+/* ── Legend toggle button (bottom right, above zoom badge) ── */
+#legend-btn{
+  position:absolute;bottom:48px;right:16px;z-index:9;
+  background:var(--panel);border:1px solid var(--border);border-radius:20px;
+  padding:4px 14px;font-size:.65rem;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--txt);font-family:'Cinzel',serif;
+  cursor:pointer;backdrop-filter:blur(6px);white-space:nowrap;
+}
+#legend-btn:hover{ border-color:var(--gold-d);color:var(--gold); }
+
 /* ── Zoom badge (bottom right) ── */
 #badge-zoom{
   position:absolute;bottom:12px;right:16px;z-index:8;
@@ -277,13 +287,15 @@ canvas#c:active{cursor:grabbing;}
   <!-- Debug mode tooltip -->
   <div id="dbg-tooltip"></div>
 
-  <!-- Legend image — bottom right corner -->
+  <!-- Legend image — bottom right corner, hidden by default -->
   <img id="legend" src="legend.png"
-       style="position:absolute;bottom:48px;right:48px;z-index:8;
+       style="position:absolute;bottom:90px;right:48px;z-index:8;
               max-width:260px;max-height:40vh;
-              pointer-events:none;"
+              pointer-events:none;display:none;"
        onerror="this.style.display='none'"
        alt="Legenda">
+  <!-- Legend toggle button -->
+  <button id="legend-btn">Legenda</button>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -785,8 +797,8 @@ function setLang(lang) {
   if (legendEl) {
     const langSrc = `${lang.id}_legend.png`;
     const fallback = 'legend.png';
-    legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = fallback; legendEl.style.display = ''; };
-    legendEl.onload  = () => { legendEl.style.display = ''; };
+    legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = fallback; if (legendVisible) legendEl.style.display = ''; };
+    legendEl.onload  = () => { if (legendVisible) legendEl.style.display = ''; };
     legendEl.src = langSrc;
   }
 
@@ -829,6 +841,15 @@ function langUpdateUI() {
     langDropdown.appendChild(btn);
   });
 }
+
+// ── Legend toggle ────────────────────────────────────────────────────
+const legendBtn = document.getElementById('legend-btn');
+const legendImg = document.getElementById('legend');
+let legendVisible = false;
+legendBtn.addEventListener('click', () => {
+  legendVisible = !legendVisible;
+  legendImg.style.display = legendVisible ? '' : 'none';
+});
 
 // Toggle dropdown open/close
 langBtn.addEventListener('click', (e) => {
@@ -1665,8 +1686,8 @@ loadPolarCaps();
       langUpdateUI();
       const legendEl = document.getElementById('legend');
       if (legendEl) {
-        legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = 'legend.png'; legendEl.style.display = ''; };
-        legendEl.onload  = () => { legendEl.style.display = ''; };
+        legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = 'legend.png'; if (legendVisible) legendEl.style.display = ''; };
+        legendEl.onload  = () => { if (legendVisible) legendEl.style.display = ''; };
         legendEl.src = `${match.id}_legend.png`;
       }
     }
