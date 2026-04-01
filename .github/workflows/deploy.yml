@@ -15,6 +15,7 @@ jobs:
         run: |
           mkdir deploy
           cp index.html deploy/
+          cp i18n.json deploy/
           cp grid.json deploy/
           cp legend.png deploy/
           cp sarmatia_legend.png deploy/
