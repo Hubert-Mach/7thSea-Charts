@@ -18,5 +18,5 @@
       "desc": "5x5 degrees per tile"
     }
   },
-  "subtile_size": 256
+  "subtile_size": 1024
 }
