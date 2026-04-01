@@ -819,6 +819,7 @@ function setLang(lang) {
 
   // Update UI
   langUpdateUI();
+  legendBtn.textContent = t('legend_btn');
 }
 
 // ── Language UI ──────────────────────────────────────────────────────
@@ -842,6 +843,22 @@ function langUpdateUI() {
   });
 }
 
+// ── i18n — loaded from i18n.json ────────────────────────────────────
+let I18N = {};
+(function loadI18n() {
+  try {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', 'i18n.json', false);
+    xhr.send();
+    if (xhr.status === 200) I18N = JSON.parse(xhr.responseText);
+  } catch(e) { console.warn('[i18n] Not loaded', e); }
+})();
+
+function t(key) {
+  const lang = I18N[activeLang.id];
+  return (lang && lang[key]) || key;
+}
+
 // ── Legend toggle ────────────────────────────────────────────────────
 const legendBtn = document.getElementById('legend-btn');
 const legendImg = document.getElementById('legend');
@@ -850,6 +867,7 @@ legendBtn.addEventListener('click', () => {
   legendVisible = !legendVisible;
   legendImg.style.display = legendVisible ? '' : 'none';
 });
+legendBtn.textContent = t('legend_btn');
 
 // Toggle dropdown open/close
 langBtn.addEventListener('click', (e) => {
@@ -1684,11 +1702,11 @@ loadPolarCaps();
       VIEWS.far.dir  = `tiles/${match.id}/far`;
       VIEWS.near.dir = `tiles/${match.id}/near`;
       langUpdateUI();
-      const legendEl = document.getElementById('legend');
-      if (legendEl) {
-        legendEl.onerror = () => { legendEl.onerror = null; legendEl.src = 'legend.png'; if (legendVisible) legendEl.style.display = ''; };
-        legendEl.onload  = () => { if (legendVisible) legendEl.style.display = ''; };
-        legendEl.src = `${match.id}_legend.png`;
+      legendBtn.textContent = t('legend_btn');
+      if (legendImg) {
+        legendImg.onerror = () => { legendImg.onerror = null; legendImg.src = 'legend.png'; if (legendVisible) legendImg.style.display = ''; };
+        legendImg.onload  = () => { if (legendVisible) legendImg.style.display = ''; };
+        legendImg.src = `${match.id}_legend.png`;
       }
     }
   } else {
